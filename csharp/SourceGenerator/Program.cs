@@ -503,6 +503,10 @@ internal class Program
         var parser = AutoTranslate.Parser();
         foreach (var row in this.Data[Language.English].GetExcelSheet<Completion>()!)
         {
+            // Skip group 61 entries
+            if (row.Group == 61)
+                continue;
+            
             var lookup = row.LookupTable.ToString().Replace("<num(", "").Replace(")>", ""); // 🙂
             
             if (lookup is not ("" or "@"))
@@ -583,17 +587,29 @@ internal class Program
                             var sheet = sheets[lang];
 
                             var idx = i;
-                            foreach (var text in from col in columns
-                                     let rawRow = sheet.GetRow(idx)
-                                     select rawRow.ReadStringColumn(col).ExtractText()
-                                     into text
-                                     where text.Length > 0
-                                     select text)
+                            if (!sheet.HasRow(idx))
+                                continue;
+
+                            var rawRow = sheet.GetRow(idx);
+                            foreach (var col in columns)
                             {
-                                var replace = text.Replace(" ", "").Replace("­", "");;
-                                builder.Append($"            {Languages[lang]}: \"{replace}\",\n");
-                                lines += 1;
-                                break;
+                                try
+                                {
+                                    var seString = rawRow.ReadStringColumn(col);
+                                    var text = seString.ExtractText();
+                                    if (text.Length > 0)
+                                    {
+                                        var replace = text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace(" ", "").Replace("­", "");
+                                        builder.Append($"            {Languages[lang]}: \"{replace}\",\n");
+                                        lines += 1;
+                                        break;
+                                    }
+                                }
+                                catch (ArgumentOutOfRangeException)
+                                {
+                                    // Column index out of range for this row, skip
+                                    continue;
+                                }
                             }
                         }
 
