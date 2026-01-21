@@ -21,6 +21,8 @@ mod web;
 mod ws;
 
 mod api;
+mod fflogs;
+mod fflogs_mapping;
 mod mongo;
 mod player;
 #[cfg(test)]

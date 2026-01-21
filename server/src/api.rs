@@ -38,27 +38,69 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                 let players = get_players_by_content_ids(state.players_collection(), &all_content_ids).await.unwrap_or_default();
                 let player_map: HashMap<u64, crate::player::Player> = players.into_iter().map(|p| (p.content_id, p)).collect();
 
-                let listings: Vec<ApiReadableListingContainer> = listings.into_iter()
-                    .map(|ql| {
-                        let member_ids = ql.listing.member_content_ids.clone();
-                        let mut container: ApiReadableListingContainer = ql.into();
-                        
-                        container.listing.members = member_ids.iter()
-                            .filter_map(|id| {
-                                let uid = *id as u64;
-                                player_map.get(&uid)
-                            })
-                            .map(|p| ApiReadableMember {
+                // Fetch parse caches for high-end duties
+                // Note: We need to know the zone_id for each listing to fetch relevant parses.
+                // For optimal performance, we should batch fetch all relevant parses.
+                // However, different listings might trigger different zone IDs.
+                // For now, let's fetch parses inside the map loop or pre-fetch if possible.
+                // Simpler approach: Fetch parses per listing (or batch by zone if needed).
+                // Given the small number of listings, per-listing fetch is acceptable for now, 
+                // but we need to supply the correct zone_id based on the duty.
+                
+                let mut listings_with_members = Vec::new();
+                for ql in listings {
+                    let member_ids = ql.listing.member_content_ids.clone();
+                    let mut container: ApiReadableListingContainer = ql.into();
+                    
+                    // Determine FFLogs Zone ID/Encounter ID if applicable
+                    let fflogs_info = crate::fflogs_mapping::get_fflogs_encounter(container.listing.duty_info.as_ref().map(|d| d.id).unwrap_or(0) as u16);
+                    let (zone_id, encounter_id) = if let Some(info) = fflogs_info {
+                        (info.zone_id, info.encounter_id)
+                    } else {
+                        (0, 0)
+                    };
+
+                    let mut members = Vec::new();
+                    
+                    // Optimisation: Fetch parses for all members of this listing at once if it's a high-end duty
+                    let mut parses = HashMap::new();
+                    if zone_id > 0 {
+                        let member_u64_ids: Vec<u64> = member_ids.iter().map(|&id| id as u64).collect();
+                        if let Ok(caches) = crate::mongo::get_parse_caches(state.parse_collection(), &member_u64_ids, zone_id).await {
+                            for cache in caches {
+                                parses.insert(cache.content_id as u64, cache);
+                            }
+                        }
+                    }
+
+                    for id in member_ids {
+                        let uid = id as u64;
+                        if let Some(p) = player_map.get(&uid) {
+                            let parse = parses.get(&uid);
+                            let (percentile, color_class) = if let Some(cache) = parse {
+                                (
+                                    Some(cache.percentile.round() as u8),
+                                    crate::fflogs_mapping::percentile_color_class(cache.percentile).to_string(),
+                                )
+                            } else {
+                                (None, "parse-none".to_string())
+                            };
+                            
+                            members.push(ApiReadableMember {
                                 content_id: p.content_id,
                                 name: p.name.clone(),
                                 home_world: p.home_world.into(),
-                            })
-                            .collect();
-                        
-                        container
-                    })
-                    .collect();
-                Ok(warp::reply::json(&listings).into_response())
+                                parse_percentile: percentile,
+                                parse_color_class: color_class,
+                            });
+                        }
+                    }
+                    
+                    container.listing.members = members;
+                    listings_with_members.push(container);
+                }
+
+                Ok(warp::reply::json(&listings_with_members).into_response())
             },
             Err(_) => Ok(warp::reply::with_status(
                 warp::reply(),
@@ -146,6 +188,8 @@ struct ApiReadableMember {
     content_id: u64,
     name: String,
     home_world: ApiReadableWorld,
+    parse_percentile: Option<u8>,
+    parse_color_class: String,
 }
 
 #[derive(Serialize)]
@@ -170,7 +214,13 @@ impl From<SeString> for ApiLocalizedString {
 impl From<PartyFinderListing> for ApiReadableListing {
     fn from(value: PartyFinderListing) -> Self {
         let duty_info = ffxiv::duty(value.duty as u32)
-            .map(|di| di.into());
+            .map(|di| ApiReadableDutyInfo {
+                id: value.duty as u32,
+                name: di.name,
+                high_end: di.high_end,
+                content_kind_id: di.content_kind.as_u32(),
+                content_kind: format!("{:?}", di.content_kind),
+            });
         let slots_filled = value.jobs_present
             .into_iter()
             .map(|job| if job == 0 {
@@ -228,6 +278,7 @@ impl From<u16> for ApiReadableWorld {
 
 #[derive(Serialize)]
 struct ApiReadableDutyInfo {
+    pub id: u32,
     pub name: ffxiv::LocalisedText,
     pub high_end: bool,
     pub content_kind_id: u32,
@@ -236,7 +287,13 @@ struct ApiReadableDutyInfo {
 
 impl From<&DutyInfo> for ApiReadableDutyInfo {
     fn from(value: &DutyInfo) -> Self {
+        // Need to find the ID from the value, but DutyInfo doesn't store its own ID.
+        // We need to pass the ID when converting or find a way to get it.
+        // Actually, listing.rs:172 `ffxiv::duty(value.duty as u32).map(|di| di.into())` passes &DutyInfo.
+        // We should change `ApiReadableListing::from` to pass the ID or make `DutyInfo` carry it (unlikely).
+        // Let's modify `ApiReadableListing::from` to instantiate `ApiReadableDutyInfo` manually or pass the ID.
         Self {
+            id: 0, // Placeholder, will be fixed in ApiReadableListing::from
             name: value.name,
             high_end: value.high_end,
             content_kind_id: value.content_kind.as_u32(),

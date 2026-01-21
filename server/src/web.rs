@@ -1,4 +1,5 @@
 use std::{cmp::Ordering, collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
+use futures_util::stream::StreamExt;
 
 use anyhow::{Context, Result};
 use mongodb::{
@@ -33,6 +34,7 @@ pub struct State {
     pub mongo: MongoClient,
     pub stats: RwLock<Option<CachedStatistics>>,
     pub listings_channel: Sender<Arc<[PartyFinderListing]>>,
+    pub fflogs_client: Option<crate::fflogs::FFLogsClient>,
 }
 
 impl State {
@@ -40,12 +42,15 @@ impl State {
         let mongo = MongoClient::with_uri_str(&config.mongo.url)
             .await
             .context("could not create mongodb client")?;
+            
+        let fflogs_client = config.fflogs.clone().map(crate::fflogs::FFLogsClient::new);
 
         let (tx, _) = tokio::sync::broadcast::channel(16);
         let state = Arc::new(Self {
             mongo,
             stats: Default::default(),
             listings_channel: tx,
+            fflogs_client,
         });
 
         state
@@ -64,23 +69,56 @@ impl State {
             .await
             .context("could not create unique index")?;
 
+        // Listings updated_at index with TTL
+        let listings_index_model = IndexModel::builder()
+            .keys(mongodb::bson::doc! {
+                "updated_at": 1,
+            })
+            .options(IndexOptions::builder().expire_after(Duration::from_secs(3600 * 2)).build())
+            .build();
+
+        if let Err(e) = state.collection().create_index(listings_index_model.clone(), None).await {
+            // Check for IndexOptionsConflict (Error code 85)
+            // kind: CommandError(CommandError { code: 85, ... })
+            let is_conflict = match &*e.kind {
+                mongodb::error::ErrorKind::Command(cmd_err) => cmd_err.code == 85,
+                _ => false,
+            };
+
+            if is_conflict {
+                eprintln!("Index option conflict detected for 'updated_at'. Dropping old index and recreating...");
+                // Drop the index by name. Default name for { updated_at: 1 } is "updated_at_1"
+                state.collection().drop_index("updated_at_1", None).await
+                    .context("could not drop conflicting updated_at index")?;
+                
+                // Retry creation
+                state.collection().create_index(listings_index_model, None).await
+                    .context("could not create updated_at index after restart")?;
+                eprintln!("Index 'updated_at' recreated with new options.");
+            } else {
+                return Err(e).context("could not create updated_at index");
+            }
+        }
+
+        // Parse collection indexes
         state
-            .collection()
+            .parse_collection()
             .create_index(
                 IndexModel::builder()
                     .keys(mongodb::bson::doc! {
-                        "updated_at": 1,
+                        "content_id": 1,
+                        "zone_id": 1,
                     })
                     .build(),
                 None,
             )
             .await
-            .context("could not create updated_at index")?;
+            .context("could not create parse index")?;
 
-        let task_state = Arc::clone(&state);
+        let stats_state = Arc::clone(&state);
         tokio::task::spawn(async move {
             loop {
-                let all_time = match self::stats::get_stats(&*task_state).await {
+                let all_time = match self::stats::get_stats(&*stats_state).await {
                     Ok(stats) => stats,
                     Err(e) => {
                         eprintln!("error generating stats: {:#?}", e);
@@ -88,7 +126,7 @@ impl State {
                     }
                 };
 
-                let seven_days = match self::stats::get_stats_seven_days(&*task_state).await {
+                let seven_days = match self::stats::get_stats_seven_days(&*stats_state).await {
                     Ok(stats) => stats,
                     Err(e) => {
                         eprintln!("error generating stats: {:#?}", e);
@@ -96,7 +134,7 @@ impl State {
                     }
                 };
 
-                *task_state.stats.write().await = Some(CachedStatistics {
+                *stats_state.stats.write().await = Some(CachedStatistics {
                     all_time,
                     seven_days,
                 });
@@ -104,6 +142,22 @@ impl State {
                 tokio::time::sleep(Duration::from_secs(60 * 60 * 12)).await;
             }
         });
+        
+        // Background FFLogs Parse Fetcher
+        if state.fflogs_client.is_some() {
+            let parse_state = Arc::clone(&state);
+            tokio::task::spawn(async move {
+                eprintln!("Starting FFLogs background service...");
+                loop {
+                   if let Err(e) = fetch_parses_task(&parse_state).await {
+                       eprintln!("Error in FFLogs background task: {:?}", e);
+                   }
+                   tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            });
+        } else {
+            eprintln!("FFLogs client not configured, skipping background service.");
+        }
 
         Ok(state)
     }
@@ -115,6 +169,162 @@ impl State {
     pub fn players_collection(&self) -> Collection<Player> {
         self.mongo.database("rpf").collection("players")
     }
+
+    pub fn parse_collection(&self) -> Collection<crate::mongo::ParseCache> {
+        self.mongo.database("rpf").collection("parses")
+    }
+}
+
+/// 백그라운드 Parse 수집 태스크 (활성 파티 기반 + 배치 쿼리)
+/// 
+/// 1시간 이내 활성 파티의 멤버만 대상으로 파싱을 수집합니다.
+/// 배치 크기: 20명, Rate Limit: 1초/배치
+async fn fetch_parses_task(state: &State) -> Result<()> {
+    use std::collections::HashMap;
+    
+    let client = state.fflogs_client.as_ref().unwrap();
+    
+    // 1. 현재 활성 파티 목록 가져오기 (1시간 이내)
+    let listings = get_current_listings(state.collection()).await?;
+    
+    // 2. 고난이도 파티만 필터링하고, Encounter별로 플레이어 그룹화
+    // Key: (zone_id, encounter_id), Value: Vec<(content_id, name, server, region)>
+    let mut encounter_players: HashMap<(u32, u32), Vec<(u64, String, String, &'static str)>> = HashMap::new();
+    
+    for container in &listings {
+        let duty_id = container.listing.duty as u16;
+        
+        // High-end + FFLogs 매핑 확인
+        if !container.listing.high_end() {
+            continue;
+        }
+        
+        let fflogs_info = match crate::fflogs_mapping::get_fflogs_encounter(duty_id) {
+            Some(info) => info,
+            None => continue,
+        };
+        
+        // 멤버 ContentID로 플레이어 정보 조회
+        let member_ids: Vec<u64> = container.listing.member_content_ids
+            .iter()
+            .map(|&id| id as u64)
+            .filter(|&id| id != 0)
+            .collect();
+        
+        let players = get_players_by_content_ids(state.players_collection(), &member_ids).await?;
+        
+        let key = (fflogs_info.zone_id, fflogs_info.encounter_id);
+        let entry = encounter_players.entry(key).or_insert_with(Vec::new);
+        
+        for player in players {
+            let region = crate::fflogs::get_region_from_server(&player.home_world_name());
+            entry.push((player.content_id as u64, player.name.clone(), player.home_world_name().to_string(), region));
+        }
+    }
+    
+    // 중복 제거 (같은 플레이어가 여러 파티에 있을 수 있음)
+    for players in encounter_players.values_mut() {
+        players.sort_by_key(|p| p.0);
+        players.dedup_by_key(|p| p.0);
+    }
+    
+    let total_players: usize = encounter_players.values().map(|v| v.len()).sum();
+    eprintln!("[FFLogs] Found {} high-end listings, {} unique player-encounter pairs", listings.len(), total_players);
+    
+    let mut fetch_count = 0;
+    let mut skip_count = 0;
+    let batch_size = 20;
+    
+    // Encounter별로 처리
+    for ((zone_id, encounter_id), players) in &encounter_players {
+        let fflogs_info = crate::fflogs_mapping::DUTY_TO_FFLOGS.values()
+            .find(|e| e.zone_id == *zone_id && e.encounter_id == *encounter_id);
+        
+        let encounter = match fflogs_info {
+            Some(e) => e,
+            None => continue,
+        };
+        
+        // 캐시 확인 후 필터링
+        let mut players_to_fetch: Vec<&(u64, String, String, &'static str)> = Vec::new();
+        
+        for player in players {
+            let cached = crate::mongo::get_parse_cache(
+                state.parse_collection(), 
+                player.0, 
+                *zone_id
+            ).await.ok().flatten();
+            
+            if let Some(cache) = &cached {
+                if !crate::mongo::is_cache_expired(cache) {
+                    skip_count += 1;
+                    continue;
+                }
+            }
+            
+            players_to_fetch.push(player);
+        }
+        
+        if players_to_fetch.is_empty() {
+            continue;
+        }
+        
+        eprintln!("[FFLogs] {} - {} players to fetch", encounter.name, players_to_fetch.len());
+        
+        let partition = crate::fflogs_mapping::FFLOGS_ZONES
+            .get(zone_id)
+            .map(|z| z.partition);
+        
+        // 배치 단위로 처리
+        for chunk in players_to_fetch.chunks(batch_size) {
+            let batch: Vec<(String, String, &'static str)> = chunk.iter()
+                .map(|p| (p.1.clone(), p.2.clone(), p.3))
+                .collect();
+            
+            // Rate Limit: 배치당 1초 대기
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            
+            let results = client.get_batch_encounter_parses(
+                batch,
+                *zone_id,
+                *encounter_id,
+                encounter.difficulty_id,
+                partition
+            ).await;
+            
+            fetch_count += 1;
+            
+            match results {
+                Ok(batch_results) => {
+                    for (idx, percentile) in batch_results {
+                        let player = chunk[idx];
+                        
+                        let cache_val = percentile.unwrap_or(-1.0);
+                        let cache = crate::mongo::ParseCache {
+                            content_id: player.0 as i64,
+                            zone_id: *zone_id,
+                            encounter_id: *encounter_id,
+                            job_id: 0, 
+                            percentile: cache_val,
+                            fetched_at: chrono::Utc::now(),
+                        };
+                        
+                        let _ = crate::mongo::upsert_parse_cache(state.parse_collection(), &cache).await;
+                        
+                        if let Some(p) = percentile {
+                            eprintln!("[FFLogs] {} @ {} -> {:.1}", player.1, encounter.name, p);
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[FFLogs] Batch error for {}: {:?}", encounter.name, e);
+                }
+            }
+        }
+    }
+    
+    eprintln!("[FFLogs] Cycle complete: {} batches, {} skipped (cached)", fetch_count, skip_count);
+    Ok(())
 }
 
 fn router(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
@@ -264,37 +474,82 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                 let players: HashMap<u64, crate::player::Player> = players_list.into_iter().map(|p| (p.content_id, p)).collect();
 
                 // Match players to listings with job info
-                let containers: Vec<crate::template::listings::RenderableListing> = containers.into_iter()
-                    .map(|container| {
-                        // jobs_present와 member_content_ids는 같은 인덱스로 매칭됨
-                        let jobs = &container.listing.jobs_present;
-                        let content_ids = &container.listing.member_content_ids;
-                        
-                        let members: Vec<crate::template::listings::RenderableMember> = content_ids.iter()
-                            .enumerate()
-                            .filter(|(_, id)| **id != 0) // 빈 슬롯 제외
-                            .map(|(i, id)| {
-                                let uid = *id as u64;
-                                let job_id = jobs.get(i).copied().unwrap_or(0);
-                                let player = players.get(&uid).cloned().unwrap_or(crate::player::Player {
-                                    content_id: uid,
-                                    name: "Unknown Member".to_string(),
-                                    home_world: 0,
-                                    last_seen: chrono::Utc::now(),
-                                    seen_count: 0,
-                                });
-                                crate::template::listings::RenderableMember { job_id, player }
-                            })
-                            .collect();
-                        
-                        crate::template::listings::RenderableListing {
-                            container,
-                            members,
-                        }
-                    })
-                    .collect();
+                let mut renderable_containers = Vec::new();
 
-                ListingsTemplate { containers, lang }
+                for container in containers {
+                    // Determine FFLogs Zone ID/Encounter ID
+                    let duty_id = container.listing.duty as u16;
+                    let high_end = container.listing.high_end();
+                    let fflogs_info = if high_end {
+                        crate::fflogs_mapping::get_fflogs_encounter(duty_id)
+                    } else {
+                        None
+                    };
+                    
+                    let (zone_id, _) = if let Some(info) = fflogs_info {
+                        (info.zone_id, info.encounter_id)
+                    } else {
+                        (0, 0)
+                    };
+
+                    let jobs = &container.listing.jobs_present;
+                    let content_ids = &container.listing.member_content_ids;
+                    
+                    // Optimisation: Fetch parses for all members of this listing at once if it's a high-end duty
+                    let mut parses = HashMap::new();
+                    if zone_id > 0 {
+                        let member_u64_ids: Vec<u64> = content_ids.iter().map(|&id| id as u64).collect();
+                        if let Ok(caches) = crate::mongo::get_parse_caches(state.parse_collection(), &member_u64_ids, zone_id).await {
+                            for cache in caches {
+                                parses.insert(cache.content_id as u64, cache);
+                            }
+                        }
+                    }
+
+                    let members: Vec<crate::template::listings::RenderableMember> = content_ids.iter()
+                        .enumerate()
+                        .filter(|(_, id)| **id != 0) // 빈 슬롯 제외
+                        .map(|(i, id)| {
+                            let uid = *id as u64;
+                            let job_id = jobs.get(i).copied().unwrap_or(0);
+                            let player = players.get(&uid).cloned().unwrap_or(crate::player::Player {
+                                content_id: uid,
+                                name: "Unknown Member".to_string(),
+                                home_world: 0,
+                                last_seen: chrono::Utc::now(),
+                                seen_count: 0,
+                            });
+                            
+                            let parse = parses.get(&uid);
+                            let (percentile, color_class) = if let Some(cache) = parse {
+                                if cache.percentile < 0.0 {
+                                    (None, "parse-none".to_string())
+                                } else {
+                                    (
+                                        Some(cache.percentile.round() as u8),
+                                        crate::fflogs_mapping::percentile_color_class(cache.percentile).to_string(),
+                                    )
+                                }
+                            } else {
+                                (None, "parse-none".to_string())
+                            };
+
+                            crate::template::listings::RenderableMember { 
+                                job_id, 
+                                player,
+                                parse_percentile: percentile,
+                                parse_color_class: color_class,
+                            }
+                        })
+                        .collect();
+                    
+                    renderable_containers.push(crate::template::listings::RenderableListing {
+                        container,
+                        members,
+                    });
+                }
+
+                ListingsTemplate { containers: renderable_containers, lang }
             }
             Err(e) => {
                 eprintln!("{:#?}", e);

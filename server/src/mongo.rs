@@ -11,7 +11,7 @@ use mongodb::options::UpdateOptions;
 pub async fn get_current_listings(
     collection: Collection<ListingContainer>,
 ) -> anyhow::Result<Vec<QueriedListing>> {
-    let two_hours_ago = Utc::now() - TimeDelta::try_hours(2).unwrap();
+    let one_hour_ago = Utc::now() - TimeDelta::try_hours(1).unwrap();
     let cursor = collection
         .aggregate(
             [
@@ -31,7 +31,7 @@ pub async fn get_current_listings(
                 // },
                 doc! {
                     "$match": {
-                        "updated_at": { "$gte": two_hours_ago },
+                        "updated_at": { "$gte": one_hour_ago },
                     }
                 },
                 doc! {
@@ -187,3 +187,133 @@ pub async fn get_players_by_content_ids(
 
     Ok(players)
 }
+
+/// 최근 활성 플레이어 전체 조회 (last_seen 7일 이내)
+pub async fn get_all_active_players(
+    collection: Collection<crate::player::Player>,
+) -> anyhow::Result<Vec<crate::player::Player>> {
+    let seven_days_ago = Utc::now() - TimeDelta::try_days(7).unwrap();
+    
+    let cursor = collection
+        .find(doc! { "last_seen": { "$gte": seven_days_ago } }, None)
+        .await?;
+
+    let players = cursor
+        .filter_map(async |res| res.ok())
+        .collect::<Vec<_>>()
+        .await;
+
+    Ok(players)
+}
+
+// =============================================================================
+// FFLogs Parse 캐시
+// =============================================================================
+
+use serde::{Deserialize, Serialize};
+
+/// FFLogs Parse 캐시 데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParseCache {
+    /// 플레이어 ContentId
+    pub content_id: i64,
+    /// FFLogs Zone ID
+    pub zone_id: u32,
+    /// FFLogs Encounter ID (0이면 Zone 전체 평균)
+    pub encounter_id: u32,
+    /// 직업 ID (0이면 Best Job)
+    pub job_id: u8,
+    /// Best Percentile (0-100)
+    pub percentile: f32,
+    /// 조회 시각
+    #[serde(with = "mongodb::bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub fetched_at: chrono::DateTime<Utc>,
+}
+
+/// Parse 캐시 조회 (content_id, zone_id 기준)
+pub async fn get_parse_cache(
+    collection: Collection<ParseCache>,
+    content_id: u64,
+    zone_id: u32,
+) -> anyhow::Result<Option<ParseCache>> {
+    let result = collection
+        .find_one(
+            doc! {
+                "content_id": content_id as i64,
+                "zone_id": zone_id as i64,
+            },
+            None,
+        )
+        .await?;
+
+    Ok(result)
+}
+
+/// Parse 캐시 일괄 조회 (여러 content_id)
+pub async fn get_parse_caches(
+    collection: Collection<ParseCache>,
+    content_ids: &[u64],
+    zone_id: u32,
+) -> anyhow::Result<Vec<ParseCache>> {
+    let ids: Vec<i64> = content_ids.iter().map(|&id| id as i64).collect();
+
+    let cursor = collection
+        .find(
+            doc! {
+                "content_id": { "$in": ids },
+                "zone_id": zone_id as i64,
+            },
+            None,
+        )
+        .await?;
+
+    let caches = cursor
+        .filter_map(async |res| res.ok())
+        .collect::<Vec<_>>()
+        .await;
+
+    Ok(caches)
+}
+
+/// Parse 캐시 저장/업데이트
+pub async fn upsert_parse_cache(
+    collection: Collection<ParseCache>,
+    cache: &ParseCache,
+) -> anyhow::Result<()> {
+    let opts = UpdateOptions::builder().upsert(true).build();
+
+    collection
+        .update_one(
+            doc! {
+                "content_id": cache.content_id,
+                "zone_id": cache.zone_id as i64,
+                "encounter_id": cache.encounter_id as i64,
+            },
+            doc! {
+                "$set": {
+                    "job_id": cache.job_id as i64,
+                    "percentile": cache.percentile,
+                    "fetched_at": cache.fetched_at,
+                },
+                "$setOnInsert": {
+                    "content_id": cache.content_id,
+                    "zone_id": cache.zone_id as i64,
+                    "encounter_id": cache.encounter_id as i64,
+                },
+            },
+            opts,
+        )
+        .await?;
+
+    Ok(())
+}
+
+// Note: 유저 요청에 따라 Parse 데이터에 대한 자동 삭제(TTL) 로직은 제거함.
+// 데이터는 오직 갱신(overwrite)만 되며, 유실되지 않음.
+
+/// 캐시가 만료되었는지 확인 (갱신 기준: 24시간)
+pub fn is_cache_expired(cache: &ParseCache) -> bool {
+    let expire_threshold = Utc::now() - TimeDelta::try_hours(24).unwrap();
+    cache.fetched_at < expire_threshold
+}
+
