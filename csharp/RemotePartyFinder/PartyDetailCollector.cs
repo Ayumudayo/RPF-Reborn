@@ -55,12 +55,10 @@ internal class PartyDetailCollector : IDisposable {
 
         // AgentLookingForGroup 확인
         var agent = AgentLookingForGroup.Instance();
-        Plugin.Log.Debug("HERE!! 2");
         if (agent == null) return;
 
         // Detailed 데이터가 있는지 확인 (LastViewedListing)
         ref var detailed = ref agent->LastViewedListing;
-        Plugin.Log.Debug("HERE!! 3");
         if (detailed.ListingId == 0) return;
 
         // DEBUG: 감지 확인

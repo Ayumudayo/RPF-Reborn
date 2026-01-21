@@ -149,6 +149,11 @@ xivpf - listings
                                 <use href="/assets/icons.svg#{{ code }}"></use>
                             </svg>
                             {%- endif %}
+
+                            {%- if let Some(percentile) = member.parse_percentile %}
+                            <span class="parse {{ member.parse_color_class }}" title="Best Parse: {{ percentile }}">{{ percentile }}</span>
+                            {%- endif %}
+                            
                             {{ member.player.name }} <small>@ {{ member.player.home_world_name() }}</small>
                         </li>
                         {%- endfor %}

@@ -347,3 +347,61 @@
     font-size: 0.85em;
     margin: 0.3em 0 0.3em 1em;
 }
+
+/* =============================================================================
+   FFLogs Parse 색상
+   ============================================================================= */
+
+/* Parse percentile 표시 */
+#listings>.listing .members-list .parse {
+    font-weight: bold;
+    font-size: 0.8em;
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    margin-right: 0.3em;
+    min-width: 2em;
+    text-align: center;
+}
+
+/* FFLogs 공식 색상 체계 */
+.parse-gold {
+    background-color: #E5CC80;
+    color: #1a1a1a;
+}
+
+.parse-pink {
+    background-color: #E268A8;
+    color: #1a1a1a;
+}
+
+.parse-orange {
+    background-color: #FF8000;
+    color: #1a1a1a;
+}
+
+.parse-purple {
+    background-color: #A335EE;
+    color: #ffffff;
+}
+
+.parse-blue {
+    background-color: #0070FF;
+    color: #ffffff;
+}
+
+.parse-green {
+    background-color: #1EFF00;
+    color: #1a1a1a;
+}
+
+.parse-gray {
+    background-color: #666666;
+    color: #ffffff;
+}
+
+/* Parse가 없는 경우 */
+.parse-none {
+    background-color: transparent;
+    color: var(--meta-text);
+    border: 1px dashed var(--meta-text);
+}

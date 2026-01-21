@@ -24,6 +24,8 @@ pub struct RenderableListing {
 pub struct RenderableMember {
     pub job_id: u8,
     pub player: crate::player::Player,
+    pub parse_percentile: Option<u8>,
+    pub parse_color_class: String,
 }
 
 impl RenderableMember {
