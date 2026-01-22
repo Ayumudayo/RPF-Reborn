@@ -6,9 +6,10 @@ xivpf - listings
 
 {% block head %}
 <link rel="stylesheet" href="/assets/common.css" />
-<link rel="stylesheet" href="/assets/listings.css?v=11" />
+<link rel="stylesheet" href="/assets/listings.css?v=13" />
 <script defer src="/assets/list.js"></script>
-<script defer src="/assets/listings.js?v=2"></script>
+<script defer src="/assets/translations.js"></script>
+<script defer src="/assets/listings.js?v=3"></script>
 {% endblock %}
 
 {% block body %}
@@ -43,16 +44,7 @@ xivpf - listings
             <details class="filter-controls">
                 <summary>advanced</summary>
                 <div>
-                    <div class="control">
-                        <label>
-                            Categories
-                            <select multiple id="category-filter">
-                                {%- for category in PartyFinderCategory::ALL %}
-                                <option value="{{ category.as_str() }}">{{ category.name().text(lang) }}</option>
-                                {%- endfor %}
-                            </select>
-                        </label>
-                    </div>
+                    <!-- Category 필터 제거됨 -->
                     <div class="roles" id="role-filter">
                         {%- for (role, jobs) in JobFlags::get_all_jobs() %}
                         <small>
@@ -74,27 +66,32 @@ xivpf - listings
                 </div>
                 <!-- 필터 UI 추가 -->
                 <div class="filter-group">
-                    <h4>Options</h4>
+                    <h4 data-i18n="options">Options</h4>
                     <label>
-                        <input type="checkbox" id="high-end-filter" value="true">
-                        High-end Duty Only
+                        <input type="checkbox" id="high-end-filter" value="true" checked>
+                        <span data-i18n="high_end_duty">High-end Duty Only</span>
                     </label>
                 </div>
                 <div class="filter-group">
-                    <h4>Objective</h4>
+                    <h4 data-i18n="objective">Objective</h4>
                     <div class="checkbox-group" id="objective-filter">
-                        <label><input type="checkbox" value="1"> Duty Completion</label>
-                        <label><input type="checkbox" value="2"> Practice</label>
-                        <label><input type="checkbox" value="4"> Loot</label>
+                        <label><input type="checkbox" value="1"> <span data-i18n="duty_completion">Duty
+                                Completion</span></label>
+                        <label><input type="checkbox" value="2"> <span data-i18n="practice">Practice</span></label>
+                        <label><input type="checkbox" value="4"> <span data-i18n="loot">Loot</span></label>
                     </div>
                 </div>
                 <div class="filter-group">
-                    <h4>Conditions</h4>
+                    <h4 data-i18n="conditions">Conditions</h4>
                     <div class="checkbox-group" id="condition-filter">
-                        <label><input type="checkbox" value="2"> Duty Complete</label>
-                        <label><input type="checkbox" value="4"> Duty Incomplete</label>
-                        <label><input type="checkbox" value="8"> Weekly Reward Unclaimed</label>
-                        <label><input type="checkbox" value="32"> One Player per Job</label>
+                        <label><input type="checkbox" value="2"> <span data-i18n="duty_complete">Duty
+                                Complete</span></label>
+                        <label><input type="checkbox" value="4"> <span data-i18n="duty_incomplete">Duty
+                                Incomplete</span></label>
+                        <label><input type="checkbox" value="8"> <span data-i18n="weekly_reward_unclaimed">Weekly Reward
+                                Unclaimed</span></label>
+                        <label><input type="checkbox" value="32"> <span data-i18n="one_player_per_job">One Player per
+                                Job</span></label>
                         <!-- 32 = 1<<5 from SearchAreaFlags::ONE_PLAYER_PER_JOB -->
                     </div>
                 </div>
@@ -103,7 +100,7 @@ xivpf - listings
     </div>
     <div id="listings" class="list">
         {%- if containers.is_empty() %}
-        <em class="no-listings">No listings - download the plugin to help contribute!</em>
+        <em class="no-listings" data-i18n="no_listings">No listings - download the plugin to help contribute!</em>
         {%- endif %}
         {%- for renderable in containers %}
         {%- let listing = renderable.container.listing.borrow() %}
@@ -167,7 +164,7 @@ xivpf - listings
                 <div class="members-list">
                     <div class="members-header">Members ({{ renderable.members.len() }})</div>
                     {%- if renderable.members.is_empty() %}
-                    <p class="no-members"><em>No information available for other members</em></p>
+                    <p class="no-members"><em data-i18n="no_members">No information available for other members</em></p>
                     {%- else %}
                     <ul>
                         {%- for member in renderable.members %}

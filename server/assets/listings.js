@@ -7,7 +7,7 @@
         roles: 0n,
         list: null,
         lang: null,
-        highEnd: false,
+        highEnd: true, // Default to true
         objectives: 0,
         conditions: 0,
         onePlayerPerJob: false,
@@ -137,11 +137,6 @@
     }
 
     function refilter() {
-        function categoryFilter(item) {
-            let category = item.elm.dataset.pfCategory;
-            return category === 'unknown' || state.allowed.includes(category);
-        }
-
         function dataCentreFilter(item) {
             return state.centre === "All" || state.centre === item.values().centre;
         }
@@ -187,7 +182,6 @@
 
         state.list.filter(item =>
             dataCentreFilter(item) &&
-            categoryFilter(item) &&
             roleFilter(item) &&
             highEndFilter(item) &&
             objectiveFilter(item) &&
@@ -230,25 +224,7 @@
         });
     }
 
-    function setUpCategoryFilter() {
-        let select = document.getElementById('category-filter');
 
-        select.addEventListener('change', () => {
-            let allowed = [];
-
-            for (let option of select.options) {
-                if (!option.selected) {
-                    continue;
-                }
-
-                let category = option.value;
-                allowed.push(category);
-            }
-
-            state.allowed = allowed;
-            refilter();
-        });
-    }
 
     function setUpRoleFilter() {
         let select = document.getElementById('role-filter');
@@ -359,12 +335,25 @@
 
     addJsClass();
     saveLoadState();
+    // Translations handled by translations.js
+
+
+    function applyTranslations() {
+        const lang = state.lang || 'en';
+        document.querySelectorAll('[data-i18n]').forEach(elem => {
+            const key = elem.dataset.i18n;
+            if (TRANSLATIONS[key] && TRANSLATIONS[key][lang]) {
+                elem.textContent = TRANSLATIONS[key][lang];
+            }
+        });
+    }
+
     reflectState();
     state.list = setUpList();
     setUpDataCentreFilter();
-    setUpCategoryFilter();
     setUpRoleFilter();
     setUpAdvancedFilters();
+    applyTranslations(); // Apply translations on load
     refilter();
     setupPaginationNav();
 })();
