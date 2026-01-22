@@ -57,15 +57,15 @@
     }
 
     function reflectState() {
-        let category = document.getElementById('category-filter');
-        for (let option of category.options) {
-            if (stateWasNull) {
-                console.log('was null');
-                state.allowed.push(option.value);
-            }
-
-            option.selected = state.allowed.includes(option.value);
-        }
+        // category-filter was removed from the template
+        // let category = document.getElementById('category-filter');
+        // for (let option of category.options) {
+        //     if (stateWasNull) {
+        //         console.log('was null');
+        //         state.allowed.push(option.value);
+        //     }
+        //     option.selected = state.allowed.includes(option.value);
+        // }
 
         let dataCentre = document.getElementById('data-centre-filter');
         dataCentre.value = state.centre;
