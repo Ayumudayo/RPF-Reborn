@@ -6,7 +6,7 @@ xivpf - listings
 
 {% block head %}
 <link rel="stylesheet" href="/assets/common.css" />
-<link rel="stylesheet" href="/assets/listings.css?v=10" />
+<link rel="stylesheet" href="/assets/listings.css?v=11" />
 <script defer src="/assets/list.js"></script>
 <script defer src="/assets/listings.js?v=2"></script>
 {% endblock %}
@@ -72,6 +72,32 @@ xivpf - listings
                         {%- endfor %}
                     </div>
                 </div>
+                <!-- 필터 UI 추가 -->
+                <div class="filter-group">
+                    <h4>Options</h4>
+                    <label>
+                        <input type="checkbox" id="high-end-filter" value="true">
+                        High-end Duty Only
+                    </label>
+                </div>
+                <div class="filter-group">
+                    <h4>Objective</h4>
+                    <div class="checkbox-group" id="objective-filter">
+                        <label><input type="checkbox" value="1"> Duty Completion</label>
+                        <label><input type="checkbox" value="2"> Practice</label>
+                        <label><input type="checkbox" value="4"> Loot</label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <h4>Conditions</h4>
+                    <div class="checkbox-group" id="condition-filter">
+                        <label><input type="checkbox" value="2"> Duty Complete</label>
+                        <label><input type="checkbox" value="4"> Duty Incomplete</label>
+                        <label><input type="checkbox" value="8"> Weekly Reward Unclaimed</label>
+                        <label><input type="checkbox" value="32"> One Player per Job</label>
+                        <!-- 32 = 1<<5 from SearchAreaFlags::ONE_PLAYER_PER_JOB -->
+                    </div>
+                </div>
             </details>
         </div>
     </div>
@@ -84,7 +110,9 @@ xivpf - listings
         <div class="listing" data-id="{{ listing.id }}"
             data-centre="{{ listing.data_centre_name().unwrap_or_default() }}"
             data-pf-category="{{ listing.html_pf_category() }}" data-joinable-roles="{{ listing.joinable_roles() }}"
-            data-num-parties="{{ listing.num_parties }}">
+            data-num-parties="{{ listing.num_parties }}" data-high-end="{{ listing.high_end() }}"
+            data-objective="{{ listing.objective.bits() }}" data-conditions="{{ listing.conditions.bits() }}"
+            data-search-area="{{ listing.search_area.bits() }}">
 
             <div class="left">
                 {%- let duty_class %}
