@@ -15,3 +15,7 @@ Cargo.lock
 *.pdb
 
 Dalamud/
+
+# Reference Projects (Ignored)
+ffxiv-datamining/
+FFLogsViewer/
