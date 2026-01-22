@@ -403,6 +403,112 @@ impl FFLogsClient {
 
         Ok(results)
     }
+
+    /// 여러 캐릭터의 Zone 내 모든 Encounter Parse를 한 번에 조회 (배치 쿼리)
+    /// 
+    /// GraphQL alias를 사용하여 한 번의 API 호출로 여러 캐릭터를 조회합니다.
+    /// Zone 내 모든 encounter의 rankings를 반환합니다.
+    /// 
+    /// # Returns
+    /// Vec<(player_index, Vec<(encounter_id, percentile)>)> - 각 플레이어의 모든 encounter 결과
+    pub async fn get_batch_zone_all_parses(
+        &self,
+        players: Vec<(String, String, &str)>, // (name, server, region)
+        zone_id: u32,
+        difficulty_id: Option<u32>,
+        partition: Option<u32>,
+    ) -> anyhow::Result<Vec<(usize, Vec<(u32, f32)>)>> {
+        if players.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 동적 GraphQL 쿼리 생성
+        let mut query_parts = Vec::new();
+        for (i, (name, server, region)) in players.iter().enumerate() {
+            let alias = format!("char{}", i);
+            let server_lower = server.to_lowercase();
+            
+            let difficulty_arg = difficulty_id.map(|d| format!(", difficulty: {}", d)).unwrap_or_default();
+            let partition_arg = partition.map(|p| format!(", partition: {}", p)).unwrap_or_default();
+            
+            query_parts.push(format!(
+                r#"{}: character(name: "{}", serverSlug: "{}", serverRegion: "{}") {{
+                    zoneRankings(zoneID: {}{}{}, metric: rdps, timeframe: Historical)
+                }}"#,
+                alias, name, server_lower, region, zone_id, difficulty_arg, partition_arg
+            ));
+        }
+
+        let query = format!(
+            r#"query {{ characterData {{ {} }} }}"#,
+            query_parts.join("\n")
+        );
+
+        let token = self.get_token().await?;
+
+        let response = self
+            .http
+            .post(GRAPHQL_URL)
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "query": query
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("FFLogs API error: {} - {}", status, body);
+        }
+
+        let result: serde_json::Value = response.json().await?;
+
+        // 결과 파싱 - Zone 내 모든 encounter 추출
+        let mut results = Vec::new();
+        
+        if let Some(errors) = result.get("errors") {
+            if errors.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+                // 에러가 있어도 부분 결과는 처리 가능
+            }
+        }
+
+        if let Some(data) = result.get("data").and_then(|d| d.get("characterData")) {
+            for (i, _) in players.iter().enumerate() {
+                let alias = format!("char{}", i);
+                
+                let encounters: Vec<(u32, f32)> = data
+                    .get(&alias)
+                    .and_then(|char| char.get("zoneRankings"))
+                    .and_then(|zr| zr.get("rankings"))
+                    .and_then(|rankings| rankings.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|item| {
+                                let enc_id = item.get("encounter")
+                                    .and_then(|e| e.get("id"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|id| id as u32)?;
+                                let percentile = item.get("rankPercent")
+                                    .and_then(|v| v.as_f64())
+                                    .map(|p| p as f32)?;
+                                Some((enc_id, percentile))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                
+                results.push((i, encounters));
+            }
+        } else {
+            // No data at all
+            for i in 0..players.len() {
+                results.push((i, Vec::new()));
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 /// 서버 이름에서 리전 추출

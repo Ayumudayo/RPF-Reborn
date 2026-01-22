@@ -62,26 +62,34 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
 
                     let mut members = Vec::new();
                     
-                    // Optimisation: Fetch parses for all members of this listing at once if it's a high-end duty
-                    let mut parses = HashMap::new();
-                    if zone_id > 0 {
+                    // Optimisation: Fetch zone caches for all members of this listing at once if it's a high-end duty
+                    let zone_caches: std::collections::HashMap<u64, crate::mongo::ZoneCache> = if zone_id > 0 {
                         let member_u64_ids: Vec<u64> = member_ids.iter().map(|&id| id as u64).collect();
-                        if let Ok(caches) = crate::mongo::get_parse_caches(state.parse_collection(), &member_u64_ids, zone_id).await {
-                            for cache in caches {
-                                parses.insert(cache.content_id as u64, cache);
-                            }
-                        }
-                    }
+                        crate::mongo::get_zone_caches(state.parse_collection(), &member_u64_ids, zone_id)
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        std::collections::HashMap::new()
+                    };
 
                     for id in member_ids {
                         let uid = id as u64;
                         if let Some(p) = player_map.get(&uid) {
-                            let parse = parses.get(&uid);
-                            let (percentile, color_class) = if let Some(cache) = parse {
-                                (
-                                    Some(cache.percentile.round() as u8),
-                                    crate::fflogs_mapping::percentile_color_class(cache.percentile).to_string(),
-                                )
+                            // Zone 캐시에서 해당 encounter의 parse 조회
+                            let (percentile, color_class) = if let Some(zone_cache) = zone_caches.get(&uid) {
+                                let enc_key = encounter_id.to_string();
+                                if let Some(enc_parse) = zone_cache.encounters.get(&enc_key) {
+                                    if enc_parse.percentile < 0.0 {
+                                        (None, "parse-none".to_string())
+                                    } else {
+                                        (
+                                            Some(enc_parse.percentile.round() as u8),
+                                            crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string(),
+                                        )
+                                    }
+                                } else {
+                                    (None, "parse-none".to_string())
+                                }
                             } else {
                                 (None, "parse-none".to_string())
                             };

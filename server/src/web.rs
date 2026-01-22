@@ -100,15 +100,15 @@ impl State {
             }
         }
 
-        // Parse collection indexes
+        // Parse collection indexes - content_id만 unique 인덱스
         state
             .parse_collection()
             .create_index(
                 IndexModel::builder()
                     .keys(mongodb::bson::doc! {
                         "content_id": 1,
-                        "zone_id": 1,
                     })
+                    .options(IndexOptions::builder().unique(true).build())
                     .build(),
                 None,
             )
@@ -170,14 +170,15 @@ impl State {
         self.mongo.database("rpf").collection("players")
     }
 
-    pub fn parse_collection(&self) -> Collection<crate::mongo::ParseCache> {
+    pub fn parse_collection(&self) -> Collection<crate::mongo::ParseCacheDoc> {
         self.mongo.database("rpf").collection("parses")
     }
 }
 
-/// 백그라운드 Parse 수집 태스크 (활성 파티 기반 + 배치 쿼리)
+/// 백그라운드 Parse 수집 태스크 (활성 파티 기반 + Zone별 배치 쿼리)
 /// 
 /// 1시간 이내 활성 파티의 멤버만 대상으로 파싱을 수집합니다.
+/// Zone 단위로 조회하여 모든 encounter 데이터를 한 번에 저장합니다.
 /// 배치 크기: 20명, Rate Limit: 1초/배치
 async fn fetch_parses_task(state: &State) -> Result<()> {
     use std::collections::HashMap;
@@ -187,9 +188,9 @@ async fn fetch_parses_task(state: &State) -> Result<()> {
     // 1. 현재 활성 파티 목록 가져오기 (1시간 이내)
     let listings = get_current_listings(state.collection()).await?;
     
-    // 2. 고난이도 파티만 필터링하고, Encounter별로 플레이어 그룹화
-    // Key: (zone_id, encounter_id), Value: Vec<(content_id, name, server, region)>
-    let mut encounter_players: HashMap<(u32, u32), Vec<(u64, String, String, &'static str)>> = HashMap::new();
+    // 2. 고난이도 파티만 필터링하고, Zone별로 플레이어 그룹화
+    // Key: zone_id, Value: (difficulty_id, Vec<(content_id, name, server, region)>)
+    let mut zone_players: HashMap<u32, (Option<u32>, Vec<(u64, String, String, &'static str)>)> = HashMap::new();
     
     for container in &listings {
         let duty_id = container.listing.duty as u16;
@@ -213,63 +214,65 @@ async fn fetch_parses_task(state: &State) -> Result<()> {
         
         let players = get_players_by_content_ids(state.players_collection(), &member_ids).await?;
         
-        let key = (fflogs_info.zone_id, fflogs_info.encounter_id);
-        let entry = encounter_players.entry(key).or_insert_with(Vec::new);
+        let entry = zone_players.entry(fflogs_info.zone_id)
+            .or_insert_with(|| (fflogs_info.difficulty_id, Vec::new()));
         
         for player in players {
             let region = crate::fflogs::get_region_from_server(&player.home_world_name());
-            entry.push((player.content_id as u64, player.name.clone(), player.home_world_name().to_string(), region));
+            entry.1.push((player.content_id as u64, player.name.clone(), player.home_world_name().to_string(), region));
         }
     }
     
     // 중복 제거 (같은 플레이어가 여러 파티에 있을 수 있음)
-    for players in encounter_players.values_mut() {
+    for (_, (_, players)) in zone_players.iter_mut() {
         players.sort_by_key(|p| p.0);
         players.dedup_by_key(|p| p.0);
     }
     
-    let total_players: usize = encounter_players.values().map(|v| v.len()).sum();
-    eprintln!("[FFLogs] Found {} high-end listings, {} unique player-encounter pairs", listings.len(), total_players);
+    let total_players: usize = zone_players.values().map(|(_, v)| v.len()).sum();
+    eprintln!("[FFLogs] Found {} high-end listings, {} unique players across {} zones", 
+        listings.len(), total_players, zone_players.len());
     
     let mut fetch_count = 0;
     let mut skip_count = 0;
+    let mut saved_count = 0;
     let batch_size = 20;
     
-    // Encounter별로 처리
-    for ((zone_id, encounter_id), players) in &encounter_players {
-        let fflogs_info = crate::fflogs_mapping::DUTY_TO_FFLOGS.values()
-            .find(|e| e.zone_id == *zone_id && e.encounter_id == *encounter_id);
+    // Zone별로 처리
+    for (zone_id, (difficulty_id, players)) in &zone_players {
+        let zone_name = crate::fflogs_mapping::FFLOGS_ZONES
+            .get(zone_id)
+            .map(|z| z.name)
+            .unwrap_or("Unknown Zone");
         
-        let encounter = match fflogs_info {
-            Some(e) => e,
-            None => continue,
-        };
-        
-        // 캐시 확인 후 필터링
+        // 캐시 확인 후 필터링: 해당 Zone의 캐시가 만료되지 않았는지 확인
         let mut players_to_fetch: Vec<&(u64, String, String, &'static str)> = Vec::new();
         
         for player in players {
-            let cached = crate::mongo::get_parse_cache(
+            // Zone 캐시 조회
+            let zone_cache = crate::mongo::get_zone_cache(
                 state.parse_collection(), 
                 player.0, 
                 *zone_id
             ).await.ok().flatten();
             
-            if let Some(cache) = &cached {
-                if !crate::mongo::is_cache_expired(cache) {
+            match &zone_cache {
+                Some(cache) if !crate::mongo::is_zone_cache_expired(cache) => {
+                    // 캐시가 유효함
                     skip_count += 1;
-                    continue;
+                }
+                _ => {
+                    // 캐시 없거나 만료됨
+                    players_to_fetch.push(player);
                 }
             }
-            
-            players_to_fetch.push(player);
         }
         
         if players_to_fetch.is_empty() {
             continue;
         }
         
-        eprintln!("[FFLogs] {} - {} players to fetch", encounter.name, players_to_fetch.len());
+        eprintln!("[FFLogs] {} - {} players to fetch", zone_name, players_to_fetch.len());
         
         let partition = crate::fflogs_mapping::FFLOGS_ZONES
             .get(zone_id)
@@ -284,11 +287,11 @@ async fn fetch_parses_task(state: &State) -> Result<()> {
             // Rate Limit: 배치당 1초 대기
             tokio::time::sleep(Duration::from_secs(1)).await;
             
-            let results = client.get_batch_encounter_parses(
+            // Zone 내 모든 encounter를 조회
+            let results = client.get_batch_zone_all_parses(
                 batch,
                 *zone_id,
-                *encounter_id,
-                encounter.difficulty_id,
+                *difficulty_id,
                 partition
             ).await;
             
@@ -296,34 +299,46 @@ async fn fetch_parses_task(state: &State) -> Result<()> {
             
             match results {
                 Ok(batch_results) => {
-                    for (idx, percentile) in batch_results {
-                        let player = chunk[idx];
+                    for (idx, encounters) in &batch_results {
+                        let player = chunk[*idx];
                         
-                        let cache_val = percentile.unwrap_or(-1.0);
-                        let cache = crate::mongo::ParseCache {
-                            content_id: player.0 as i64,
-                            zone_id: *zone_id,
-                            encounter_id: *encounter_id,
-                            job_id: 0, 
-                            percentile: cache_val,
+                        // ZoneCache 생성
+                        let mut encounter_map = HashMap::new();
+                        for (enc_id, percentile) in encounters {
+                            encounter_map.insert(
+                                enc_id.to_string(),
+                                crate::mongo::EncounterParse {
+                                    percentile: *percentile,
+                                    job_id: 0,
+                                }
+                            );
+                        }
+                        
+                        let zone_cache = crate::mongo::ZoneCache {
                             fetched_at: chrono::Utc::now(),
+                            encounters: encounter_map,
                         };
                         
-                        let _ = crate::mongo::upsert_parse_cache(state.parse_collection(), &cache).await;
+                        // Zone 전체 upsert
+                        let _ = crate::mongo::upsert_zone_cache(
+                            state.parse_collection(),
+                            player.0,
+                            *zone_id,
+                            &zone_cache
+                        ).await;
                         
-                        if let Some(p) = percentile {
-                            eprintln!("[FFLogs] {} @ {} -> {:.1}", player.1, encounter.name, p);
-                        }
+                        saved_count += encounters.len();
                     }
                 },
                 Err(e) => {
-                    eprintln!("[FFLogs] Batch error for {}: {:?}", encounter.name, e);
+                    eprintln!("[FFLogs] Batch error for {}: {:?}", zone_name, e);
                 }
             }
         }
     }
     
-    eprintln!("[FFLogs] Cycle complete: {} batches, {} skipped (cached)", fetch_count, skip_count);
+    eprintln!("[FFLogs] Cycle complete: {} batches, {} parses saved, {} skipped (cached)", 
+        fetch_count, saved_count, skip_count);
     Ok(())
 }
 
@@ -486,7 +501,7 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                         None
                     };
                     
-                    let (zone_id, _) = if let Some(info) = fflogs_info {
+                    let (zone_id, encounter_id) = if let Some(info) = fflogs_info {
                         (info.zone_id, info.encounter_id)
                     } else {
                         (0, 0)
@@ -495,16 +510,15 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                     let jobs = &container.listing.jobs_present;
                     let content_ids = &container.listing.member_content_ids;
                     
-                    // Optimisation: Fetch parses for all members of this listing at once if it's a high-end duty
-                    let mut parses = HashMap::new();
-                    if zone_id > 0 {
+                    // Optimisation: Fetch zone caches for all members of this listing at once if it's a high-end duty
+                    let zone_caches: HashMap<u64, crate::mongo::ZoneCache> = if zone_id > 0 {
                         let member_u64_ids: Vec<u64> = content_ids.iter().map(|&id| id as u64).collect();
-                        if let Ok(caches) = crate::mongo::get_parse_caches(state.parse_collection(), &member_u64_ids, zone_id).await {
-                            for cache in caches {
-                                parses.insert(cache.content_id as u64, cache);
-                            }
-                        }
-                    }
+                        crate::mongo::get_zone_caches(state.parse_collection(), &member_u64_ids, zone_id)
+                            .await
+                            .unwrap_or_default()
+                    } else {
+                        HashMap::new()
+                    };
 
                     let members: Vec<crate::template::listings::RenderableMember> = content_ids.iter()
                         .enumerate()
@@ -520,15 +534,20 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                                 seen_count: 0,
                             });
                             
-                            let parse = parses.get(&uid);
-                            let (percentile, color_class) = if let Some(cache) = parse {
-                                if cache.percentile < 0.0 {
-                                    (None, "parse-none".to_string())
+                            // Zone 캐시에서 해당 encounter의 parse 조회
+                            let (percentile, color_class) = if let Some(zone_cache) = zone_caches.get(&uid) {
+                                let enc_key = encounter_id.to_string();
+                                if let Some(enc_parse) = zone_cache.encounters.get(&enc_key) {
+                                    if enc_parse.percentile < 0.0 {
+                                        (None, "parse-none".to_string())
+                                    } else {
+                                        (
+                                            Some(enc_parse.percentile.round() as u8),
+                                            crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string(),
+                                        )
+                                    }
                                 } else {
-                                    (
-                                        Some(cache.percentile.round() as u8),
-                                        crate::fflogs_mapping::percentile_color_class(cache.percentile).to_string(),
-                                    )
+                                    (None, "parse-none".to_string())
                                 }
                             } else {
                                 (None, "parse-none".to_string())

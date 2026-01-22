@@ -207,113 +207,127 @@ pub async fn get_all_active_players(
 }
 
 // =============================================================================
-// FFLogs Parse 캐시
+// FFLogs Parse 캐시 (ContentID별 중첩 문서)
 // =============================================================================
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// FFLogs Parse 캐시 데이터
+/// FFLogs Parse 캐시 문서 (ContentID당 1개)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParseCache {
+pub struct ParseCacheDoc {
     /// 플레이어 ContentId
     pub content_id: i64,
-    /// FFLogs Zone ID
-    pub zone_id: u32,
-    /// FFLogs Encounter ID (0이면 Zone 전체 평균)
-    pub encounter_id: u32,
-    /// 직업 ID (0이면 Best Job)
-    pub job_id: u8,
-    /// Best Percentile (0-100)
-    pub percentile: f32,
-    /// 조회 시각
+    /// Zone별 캐시 데이터 (key: zone_id as string)
+    #[serde(default)]
+    pub zones: HashMap<String, ZoneCache>,
+}
+
+/// Zone별 캐시 데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZoneCache {
+    /// 이 Zone의 조회 시각
     #[serde(with = "mongodb::bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub fetched_at: chrono::DateTime<Utc>,
+    /// Encounter별 파싱 데이터 (key: encounter_id as string)
+    #[serde(default)]
+    pub encounters: HashMap<String, EncounterParse>,
 }
 
-/// Parse 캐시 조회 (content_id, zone_id 기준)
-pub async fn get_parse_cache(
-    collection: Collection<ParseCache>,
+/// Encounter별 파싱 데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncounterParse {
+    /// Best Percentile (0-100, -1이면 로그 없음)
+    pub percentile: f32,
+    /// 직업 ID (0이면 Best Job)
+    #[serde(default)]
+    pub job_id: u8,
+}
+
+/// 플레이어의 특정 Zone 캐시 조회
+pub async fn get_zone_cache(
+    collection: Collection<ParseCacheDoc>,
     content_id: u64,
     zone_id: u32,
-) -> anyhow::Result<Option<ParseCache>> {
-    let result = collection
+) -> anyhow::Result<Option<ZoneCache>> {
+    let zone_key = zone_id.to_string();
+    
+    let doc = collection
         .find_one(
-            doc! {
-                "content_id": content_id as i64,
-                "zone_id": zone_id as i64,
-            },
+            doc! { "content_id": content_id as i64 },
             None,
         )
         .await?;
-
-    Ok(result)
+    
+    Ok(doc.and_then(|d| d.zones.get(&zone_key).cloned()))
 }
 
-/// Parse 캐시 일괄 조회 (여러 content_id)
-pub async fn get_parse_caches(
-    collection: Collection<ParseCache>,
+/// 여러 플레이어의 특정 Zone 캐시 일괄 조회
+pub async fn get_zone_caches(
+    collection: Collection<ParseCacheDoc>,
     content_ids: &[u64],
     zone_id: u32,
-) -> anyhow::Result<Vec<ParseCache>> {
+) -> anyhow::Result<HashMap<u64, ZoneCache>> {
     let ids: Vec<i64> = content_ids.iter().map(|&id| id as i64).collect();
-
+    let zone_key = zone_id.to_string();
+    
     let cursor = collection
         .find(
-            doc! {
-                "content_id": { "$in": ids },
-                "zone_id": zone_id as i64,
-            },
+            doc! { "content_id": { "$in": ids } },
             None,
         )
         .await?;
-
-    let caches = cursor
+    
+    let docs: Vec<ParseCacheDoc> = cursor
         .filter_map(async |res| res.ok())
         .collect::<Vec<_>>()
         .await;
-
-    Ok(caches)
+    
+    let mut result = HashMap::new();
+    for doc in docs {
+        if let Some(zone_cache) = doc.zones.get(&zone_key) {
+            result.insert(doc.content_id as u64, zone_cache.clone());
+        }
+    }
+    
+    Ok(result)
 }
 
-/// Parse 캐시 저장/업데이트
-pub async fn upsert_parse_cache(
-    collection: Collection<ParseCache>,
-    cache: &ParseCache,
+/// Zone 전체 캐시 저장/업데이트
+/// 
+/// content_id 문서가 없으면 생성, 있으면 해당 zone만 갱신
+pub async fn upsert_zone_cache(
+    collection: Collection<ParseCacheDoc>,
+    content_id: u64,
+    zone_id: u32,
+    zone_cache: &ZoneCache,
 ) -> anyhow::Result<()> {
     let opts = UpdateOptions::builder().upsert(true).build();
-
+    let zone_key = format!("zones.{}", zone_id);
+    
+    // BSON으로 변환
+    let zone_bson = mongodb::bson::to_bson(zone_cache)?;
+    
     collection
         .update_one(
+            doc! { "content_id": content_id as i64 },
             doc! {
-                "content_id": cache.content_id,
-                "zone_id": cache.zone_id as i64,
-                "encounter_id": cache.encounter_id as i64,
-            },
-            doc! {
-                "$set": {
-                    "job_id": cache.job_id as i64,
-                    "percentile": cache.percentile,
-                    "fetched_at": cache.fetched_at,
-                },
-                "$setOnInsert": {
-                    "content_id": cache.content_id,
-                    "zone_id": cache.zone_id as i64,
-                    "encounter_id": cache.encounter_id as i64,
-                },
+                "$set": { &zone_key: zone_bson },
+                "$setOnInsert": { "content_id": content_id as i64 },
             },
             opts,
         )
         .await?;
-
+    
     Ok(())
+}
+
+/// Zone 캐시가 만료되었는지 확인 (갱신 기준: 24시간)
+pub fn is_zone_cache_expired(zone_cache: &ZoneCache) -> bool {
+    let expire_threshold = Utc::now() - TimeDelta::try_hours(24).unwrap();
+    zone_cache.fetched_at < expire_threshold
 }
 
 // Note: 유저 요청에 따라 Parse 데이터에 대한 자동 삭제(TTL) 로직은 제거함.
 // 데이터는 오직 갱신(overwrite)만 되며, 유실되지 않음.
-
-/// 캐시가 만료되었는지 확인 (갱신 기준: 24시간)
-pub fn is_cache_expired(cache: &ParseCache) -> bool {
-    let expire_threshold = Utc::now() - TimeDelta::try_hours(24).unwrap();
-    cache.fetched_at < expire_threshold
-}
 
