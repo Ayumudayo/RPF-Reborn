@@ -41,8 +41,8 @@ xivpf - listings
             </select>
         </div>
         <div>
-            <details class="filter-controls">
-                <summary data-i18n="advanced">Advanced</summary>
+            <div class="filter-controls">
+                <div style="margin-bottom: 0.5rem; font-weight: bold;" data-i18n="advanced">Advanced</div>
                 <div class="filter-card material-card">
                     <!-- Roles -->
                     <div class="filter-section">
@@ -127,8 +127,8 @@ xivpf - listings
                     </div>
                 </div>
 
+            </div>
         </div>
-        </details>
     </div>
     <div id="listings" class="list">
         {%- if containers.is_empty() %}
@@ -196,7 +196,8 @@ xivpf - listings
                 <div class="members-list">
                     <div class="members-header">Members ({{ renderable.members.len() }})</div>
                     {%- if renderable.members.is_empty() %}
-                    <p class="no-members"><em data-i18n="no_members">No information available for other members</em></p>
+                    <p class="no-members"><em data-i18n="no_members">No information available for other members</em>
+                    </p>
                     {%- else %}
                     <ul>
                         {%- for member in renderable.members %}

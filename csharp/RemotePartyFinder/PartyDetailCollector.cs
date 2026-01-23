@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -21,16 +20,13 @@ namespace RemotePartyFinder;
 internal class PartyDetailCollector : IDisposable {
     private Plugin Plugin { get; }
     private HttpClient Client { get; } = new();
-    private Stopwatch CheckTimer { get; } = new();
-    
+    private bool wasAddonOpen = false;
     // 이미 업로드한 리스팅을 캐시하여 중복 업로드 방지
     private Dictionary<uint, DateTime> UploadedDetails { get; } = new();
     private const double CacheExpirationMinutes = 0.05; // 3초 (디버깅용)
-    private const int CheckIntervalSeconds = 1;
 
     internal PartyDetailCollector(Plugin plugin) {
         this.Plugin = plugin;
-        this.CheckTimer.Start();
         this.Plugin.Framework.Update += this.OnUpdate;
     }
 
@@ -39,19 +35,22 @@ internal class PartyDetailCollector : IDisposable {
     }
 
     private unsafe void OnUpdate(IFramework framework) {
-        // 체크 주기
-        if (this.CheckTimer.Elapsed < TimeSpan.FromSeconds(CheckIntervalSeconds)) {
-            return;
-        }
-        this.CheckTimer.Restart();
-
         // UI 창(Addon)이 열려있는지 확인
         // GetAddonByName returns 0 if addon is not loaded/visible
         nint addonPtr = this.Plugin.GameGui.GetAddonByName("LookingForGroupDetail", 1);
         if (addonPtr == 0) {
+            // 창이 닫혔으면 플래그 리셋
+            this.wasAddonOpen = false;
             return;
         }
-        // Addon이 로드되어 있으면 진행 (IsVisible 오프셋은 패치마다 다를 수 있어 제거)
+
+        // 창이 이미 열려있고 이번 세션에서 처리 완료했으면 아무것도 안 함
+        if (this.wasAddonOpen) {
+            return;
+        }
+
+        // 창이 방금 열렸음 - 처리 시작
+        this.wasAddonOpen = true;
 
         // AgentLookingForGroup 확인
         var agent = AgentLookingForGroup.Instance();
@@ -66,11 +65,7 @@ internal class PartyDetailCollector : IDisposable {
 
         var now = DateTime.UtcNow;
 
-        // 캐시 확인 (최근에 업로드한 리스팅은 스킵)
-        if (this.UploadedDetails.TryGetValue(detailed.ListingId, out var lastUpload)) {
-            // Plugin.Log.Debug($"PartyDetailCollector: Skipping {detailed.ListingId} (Cached)");
-            if ((now - lastUpload).TotalMinutes < CacheExpirationMinutes) return;
-        }
+        // 캐시 확인은 이제 불필요 - 이 지점에 도달했다면 창이 방금 열린 것이므로 항상 전송
 
         Plugin.Log.Info($"PartyDetailCollector: Processing ListingId {detailed.ListingId} Leader {agent->LastLeader}");
 
