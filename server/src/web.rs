@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use warp::{filters::BoxedFilter, http::Uri, Filter, Reply};
 
 use crate::api::api;
-use crate::mongo::{get_current_listings, insert_listing, upsert_players, get_players_by_content_ids};
+use crate::mongo::{get_current_listings, insert_listing, upsert_players, get_players_by_content_ids, get_parse_docs};
 use crate::player::{Player, UploadablePlayer};
 use crate::{
     config::Config, ffxiv::Language, listing::PartyFinderListing,
@@ -488,13 +488,19 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                 containers.reverse();
 
                 // Collect all member IDs
-                let all_content_ids: Vec<u64> = containers.iter()
+                let mut all_content_ids: Vec<u64> = containers.iter()
                     .flat_map(|l| l.listing.member_content_ids.iter().map(|&id| id as u64))
+                    .filter(|&id| id != 0)
                     .collect();
+                all_content_ids.sort_unstable();
+                all_content_ids.dedup();
                 
                 // Fetch players
                 let players_list = get_players_by_content_ids(state.players_collection(), &all_content_ids).await.unwrap_or_default();
                 let players: HashMap<u64, crate::player::Player> = players_list.into_iter().map(|p| (p.content_id, p)).collect();
+
+                // Optimisation: Pre-fetch all parse docs for all visible players
+                let all_parse_docs = get_parse_docs(state.parse_collection(), &all_content_ids).await.unwrap_or_default();
 
                 // Match players to listings with job info
                 let mut renderable_containers = Vec::new();
@@ -518,15 +524,8 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                     let jobs = &container.listing.jobs_present;
                     let content_ids = &container.listing.member_content_ids;
                     
-                    // Optimisation: Fetch zone caches for all members of this listing at once if it's a high-end duty
-                    let zone_caches: HashMap<u64, crate::mongo::ZoneCache> = if zone_id > 0 {
-                        let member_u64_ids: Vec<u64> = content_ids.iter().map(|&id| id as u64).collect();
-                        crate::mongo::get_zone_caches(state.parse_collection(), &member_u64_ids, zone_id)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        HashMap::new()
-                    };
+                    // Zone ID 문자열 미리 생성
+                    let zone_key = zone_id.to_string();
 
                     let members: Vec<crate::template::listings::RenderableMember> = content_ids.iter()
                         .enumerate()
@@ -543,7 +542,9 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                             });
                             
                             // Zone 캐시에서 해당 encounter의 parse 조회
-                            let (percentile, color_class) = if let Some(zone_cache) = zone_caches.get(&uid) {
+                            let (percentile, color_class) = if zone_id > 0 {
+                                if let Some(doc) = all_parse_docs.get(&uid) {
+                                    if let Some(zone_cache) = doc.zones.get(&zone_key) {
                                 let enc_key = encounter_id.to_string();
                                 if let Some(enc_parse) = zone_cache.encounters.get(&enc_key) {
                                     if enc_parse.percentile < 0.0 {
@@ -553,6 +554,12 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
                                             Some(enc_parse.percentile.round() as u8),
                                             crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string(),
                                         )
+                                    }
+                                } else {
+                                    (None, "parse-none".to_string())
+                                }
+                                    } else {
+                                        (None, "parse-none".to_string())
                                     }
                                 } else {
                                     (None, "parse-none".to_string())

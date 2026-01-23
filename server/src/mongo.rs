@@ -293,6 +293,33 @@ pub async fn get_zone_caches(
     Ok(result)
 }
 
+/// 여러 플레이어의 전체 Parse 데이터 일괄 조회 (배치 최적화용)
+pub async fn get_parse_docs(
+    collection: Collection<ParseCacheDoc>,
+    content_ids: &[u64],
+) -> anyhow::Result<HashMap<u64, ParseCacheDoc>> {
+    let ids: Vec<i64> = content_ids.iter().map(|&id| id as i64).collect();
+    
+    let cursor = collection
+        .find(
+            doc! { "content_id": { "$in": ids } },
+            None,
+        )
+        .await?;
+    
+    let docs: Vec<ParseCacheDoc> = cursor
+        .filter_map(async |res| res.ok())
+        .collect::<Vec<_>>()
+        .await;
+    
+    let mut result = HashMap::new();
+    for doc in docs {
+        result.insert(doc.content_id as u64, doc);
+    }
+    
+    Ok(result)
+}
+
 /// Zone 전체 캐시 저장/업데이트
 /// 
 /// content_id 문서가 없으면 생성, 있으면 해당 zone만 갱신

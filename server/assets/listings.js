@@ -193,8 +193,8 @@
         let select = document.getElementById('data-centre-filter');
 
         let dataCentres = {};
-        for (let elem of document.querySelectorAll('#listings > .listing')) {
-            let centre = elem.dataset['centre'];
+        for (let item of state.list.items) {
+            let centre = item.values().centre;
             if (!dataCentres.hasOwnProperty(centre)) {
                 dataCentres[centre] = 0;
             }

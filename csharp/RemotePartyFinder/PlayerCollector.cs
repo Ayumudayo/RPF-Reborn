@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -23,7 +24,8 @@ internal class PlayerCollector : IDisposable {
     private Stopwatch ScanTimer { get; } = new();
     
     // 이미 업로드한 플레이어를 캐시하여 중복 업로드 방지
-    private Dictionary<ulong, DateTime> UploadedPlayers { get; } = new();
+    private ConcurrentDictionary<ulong, DateTime> UploadedPlayers { get; } = new();
+    private volatile bool _isUploading;
     private const int CacheExpirationMinutes = 5;
     private const int ScanIntervalSeconds = 5;
     
@@ -46,6 +48,10 @@ internal class PlayerCollector : IDisposable {
             return;
         }
         this.ScanTimer.Restart();
+
+
+        // 업로드 중이면 스킵 (Stacking 방지)
+        if (this._isUploading) return;
 
         // ObjectTable에서 플레이어 수집
         var players = new List<UploadablePlayer>();
@@ -74,7 +80,7 @@ internal class PlayerCollector : IDisposable {
                 HomeWorld = homeWorld,
             });
             
-            this.UploadedPlayers[contentId] = now;
+
         }
 
         // 오래된 캐시 정리
@@ -83,11 +89,12 @@ internal class PlayerCollector : IDisposable {
             .Select(kvp => kvp.Key)
             .ToList();
         foreach (var key in expiredKeys) {
-            this.UploadedPlayers.Remove(key);
+            this.UploadedPlayers.TryRemove(key, out _);
         }
 
         // 서버에 업로드 (별도 safe 컨텍스트에서)
         if (players.Count > 0) {
+            this._isUploading = true;
             UploadPlayersAsync(players);
         }
     }
@@ -96,6 +103,8 @@ internal class PlayerCollector : IDisposable {
         Task.Run(async () => {
             try {
                 var json = JsonConvert.SerializeObject(players);
+                var success = false;
+
                 foreach (var uploadUrl in this.Plugin.Configuration.UploadUrls.Where(u => u.IsEnabled)) {
                     var baseUrl = uploadUrl.Url.TrimEnd('/');
                     
@@ -111,11 +120,26 @@ internal class PlayerCollector : IDisposable {
                     var resp = await this.Client.PostAsync(playersUrl, new StringContent(json) {
                         Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
                     });
+                    
+                    if (resp.IsSuccessStatusCode) {
+                        success = true;
+                    }
+                    
                     var output = await resp.Content.ReadAsStringAsync();
                     Plugin.Log.Debug($"PlayerCollector: {playersUrl}: {output}");
                 }
+
+                // 하나라도 성공했으면 캐시 업데이트
+                if (success) {
+                    var now = DateTime.UtcNow;
+                    foreach (var player in players) {
+                        this.UploadedPlayers[player.ContentId] = now;
+                    }
+                }
             } catch (Exception e) {
                 Plugin.Log.Error($"PlayerCollector upload error: {e.Message}");
+            } finally {
+                this._isUploading = false;
             }
         });
     }
