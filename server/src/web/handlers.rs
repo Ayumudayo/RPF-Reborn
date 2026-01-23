@@ -97,7 +97,7 @@ pub async fn listings_handler(
                                             (None, "parse-none".to_string())
                                         } else {
                                             (
-                                                Some(enc_parse.percentile.round() as u8),
+                                                Some(enc_parse.percentile as u8),
                                                 crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string(),
                                             )
                                         }
