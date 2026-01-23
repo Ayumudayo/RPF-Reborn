@@ -76,7 +76,7 @@ pub async fn listings_handler(
                 let members: Vec<crate::template::listings::RenderableMember> = content_ids.iter()
                     .enumerate()
                     .filter(|(_, id)| **id != 0) // 빈 슬롯 제외
-                    .map(|(i, id)| {
+                    .filter_map(|(i, id)| {
                         let uid = *id as u64;
                         let job_id = jobs.get(i).copied().unwrap_or(0);
                         let player = players.get(&uid).cloned().unwrap_or(crate::player::Player {
@@ -87,6 +87,12 @@ pub async fn listings_handler(
                             seen_count: 0,
                         });
                         
+                        // 잡 정보가 없는 멤버는 표시하지 않음 (Ghost Member 방지)
+                        // 리스팅 정보(jobs)와 세부 정보(content_ids) 간의 불일치 시, 리스팅 정보를 신뢰함
+                        if job_id == 0 {
+                            return None;
+                        }
+
                         // Parse Data (P1 & P2)
                         let mut p1_percentile = None;
                         let mut p1_class = "parse-none".to_string();
@@ -117,7 +123,7 @@ pub async fn listings_handler(
                             }
                         }
 
-                        crate::template::listings::RenderableMember { 
+                        Some(crate::template::listings::RenderableMember { 
                             job_id, 
                             player,
                             parse_percentile: p1_percentile,
@@ -125,7 +131,7 @@ pub async fn listings_handler(
                             secondary_parse_percentile: p2_percentile,
                             secondary_parse_color_class: p2_class,
                             has_secondary: secondary_encounter_id.is_some(),
-                        }
+                        })
                     })
                     .collect();
                 
