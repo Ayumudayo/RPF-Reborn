@@ -32,7 +32,13 @@ mod test;
 #[tokio::main]
 async fn main() {
     // 로깅 초기화: 콘솔 + 일별 로테이션 파일
-    let file_appender = tracing_appender::rolling::daily("logs", "server.log");
+    let file_appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("server")
+        .filename_suffix("log")
+        .build("logs")
+        .expect("initializing rolling file appender failed");
+
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     
     tracing_subscriber::fmt()
