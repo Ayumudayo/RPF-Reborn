@@ -120,18 +120,19 @@ async fn fetch_parses_task(state: &State) -> Result<()> {
             .map(|z| z.name)
             .unwrap_or("Unknown Zone");
         
+        // 배치로 Zone 캐시 일괄 조회 (N+1 쿼리 방지)
+        let content_ids: Vec<u64> = players.iter().map(|p| p.0).collect();
+        let cached_zones = crate::mongo::get_zone_caches(
+            state.parse_collection(),
+            &content_ids,
+            *zone_id
+        ).await.unwrap_or_default();
+        
         // 캐시 확인 후 필터링: 해당 Zone의 캐시가 만료되지 않았는지 확인
         let mut players_to_fetch: Vec<&(u64, String, String, &'static str)> = Vec::new();
         
         for player in players {
-            // Zone 캐시 조회
-            let zone_cache = crate::mongo::get_zone_cache(
-                state.parse_collection(), 
-                player.0, 
-                *zone_id
-            ).await.ok().flatten();
-            
-            match &zone_cache {
+            match cached_zones.get(&player.0) {
                 Some(cache) if !crate::mongo::is_zone_cache_expired(cache) => {
                     // 캐시가 유효함
                     skip_count += 1;

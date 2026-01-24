@@ -4,7 +4,7 @@ use mongodb::bson::doc;
 
 use crate::listing::PartyFinderListing;
 
-use crate::mongo::{get_current_listings, insert_listing, upsert_players, get_players_by_content_ids, get_parse_docs};
+use crate::mongo::{get_current_listings, insert_listing, upsert_players, get_players_by_content_ids, get_parse_docs, ParseCacheDoc};
 use crate::player::UploadablePlayer;
 use crate::{
     ffxiv::Language,
@@ -12,6 +12,46 @@ use crate::{
     template::stats::StatsTemplate,
 };
 use super::State;
+
+/// Parse percentile 조회 헬퍼 함수
+/// 
+/// Returns: (p1_percentile, p1_color_class, p2_percentile, p2_color_class)
+fn lookup_parse_percentiles(
+    parse_docs: &HashMap<u64, ParseCacheDoc>,
+    content_id: u64,
+    zone_key: &str,
+    encounter_id: u32,
+    secondary_encounter_id: Option<u32>,
+) -> (Option<u8>, String, Option<u8>, String) {
+    let mut p1_percentile = None;
+    let mut p1_class = "parse-none".to_string();
+    let mut p2_percentile = None;
+    let mut p2_class = "parse-none".to_string();
+    
+    if let Some(doc) = parse_docs.get(&content_id) {
+        if let Some(zone_cache) = doc.zones.get(zone_key) {
+            // Primary (P1)
+            if let Some(enc_parse) = zone_cache.encounters.get(&encounter_id.to_string()) {
+                if enc_parse.percentile >= 0.0 {
+                    p1_percentile = Some(enc_parse.percentile as u8);
+                    p1_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
+                }
+            }
+            
+            // Secondary (P2)
+            if let Some(sec_id) = secondary_encounter_id {
+                if let Some(enc_parse) = zone_cache.encounters.get(&sec_id.to_string()) {
+                    if enc_parse.percentile >= 0.0 {
+                        p2_percentile = Some(enc_parse.percentile as u8);
+                        p2_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
+                    }
+                }
+            }
+        }
+    }
+    
+    (p1_percentile, p1_class, p2_percentile, p2_class)
+}
 
 pub async fn listings_handler(
     state: Arc<State>,
@@ -22,17 +62,12 @@ pub async fn listings_handler(
     let res = get_current_listings(state.collection()).await;
     Ok(match res {
         Ok(mut containers) => {
+            // 단일 정렬로 통합: updated_minute DESC → pf_category DESC → time_left ASC
             containers.sort_by(|a, b| {
-                a.time_left
-                    .partial_cmp(&b.time_left)
-                    .unwrap_or(Ordering::Equal)
+                b.updated_minute.cmp(&a.updated_minute)
+                    .then_with(|| b.listing.pf_category().cmp(&a.listing.pf_category()))
+                    .then_with(|| a.time_left.partial_cmp(&b.time_left).unwrap_or(Ordering::Equal))
             });
-
-            containers.sort_by_key(|container| container.listing.pf_category());
-            containers.reverse();
-
-            containers.sort_by_key(|container| container.updated_minute);
-            containers.reverse();
 
             // Collect all member IDs + leader IDs
             let mut all_content_ids: Vec<u64> = containers.iter()
@@ -97,35 +132,12 @@ pub async fn listings_handler(
                             return None;
                         }
 
-                        // Parse Data (P1 & P2)
-                        let mut p1_percentile = None;
-                        let mut p1_class = "parse-none".to_string();
-                        let mut p2_percentile = None;
-                        let mut p2_class = "parse-none".to_string();
-
-                        if zone_id > 0 {
-                            if let Some(doc) = all_parse_docs.get(&uid) {
-                                if let Some(zone_cache) = doc.zones.get(&zone_key) {
-                                    // Primary (P1)
-                                    if let Some(enc_parse) = zone_cache.encounters.get(&encounter_id.to_string()) {
-                                        if enc_parse.percentile >= 0.0 {
-                                            p1_percentile = Some(enc_parse.percentile as u8);
-                                            p1_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
-                                        }
-                                    }
-                                    
-                                    // Secondary (P2)
-                                    if let Some(sec_id) = secondary_encounter_id {
-                                        if let Some(enc_parse) = zone_cache.encounters.get(&sec_id.to_string()) {
-                                            if enc_parse.percentile >= 0.0 {
-                                                p2_percentile = Some(enc_parse.percentile as u8);
-                                                p2_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Parse Data (P1 & P2) - 헬퍼 함수 사용
+                        let (p1_percentile, p1_class, p2_percentile, p2_class) = if zone_id > 0 {
+                            lookup_parse_percentiles(&all_parse_docs, uid, &zone_key, encounter_id, secondary_encounter_id)
+                        } else {
+                            (None, "parse-none".to_string(), None, "parse-none".to_string())
+                        };
 
                         Some(crate::template::listings::RenderableMember { 
                             job_id, 
@@ -139,36 +151,14 @@ pub async fn listings_handler(
                     })
                     .collect();
                 
-                // 파티장 로그 계산 (leader_content_id 사용)
+                // 파티장 로그 계산 (leader_content_id 사용) - 헬퍼 함수 사용
                 let leader_content_id = container.listing.leader_content_id;
-                let mut leader_p1_percentile = None;
-                let mut leader_p1_class = "parse-none".to_string();
-                let mut leader_p2_percentile = None;
-                let mut leader_p2_class = "parse-none".to_string();
-
-                if zone_id > 0 && leader_content_id != 0 {
-                    if let Some(doc) = all_parse_docs.get(&leader_content_id) {
-                        if let Some(zone_cache) = doc.zones.get(&zone_key) {
-                            // Primary (P1)
-                            if let Some(enc_parse) = zone_cache.encounters.get(&encounter_id.to_string()) {
-                                if enc_parse.percentile >= 0.0 {
-                                    leader_p1_percentile = Some(enc_parse.percentile as u8);
-                                    leader_p1_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
-                                }
-                            }
-                            
-                            // Secondary (P2)
-                            if let Some(sec_id) = secondary_encounter_id {
-                                if let Some(enc_parse) = zone_cache.encounters.get(&sec_id.to_string()) {
-                                    if enc_parse.percentile >= 0.0 {
-                                        leader_p2_percentile = Some(enc_parse.percentile as u8);
-                                        leader_p2_class = crate::fflogs_mapping::percentile_color_class(enc_parse.percentile).to_string();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let (leader_p1_percentile, leader_p1_class, leader_p2_percentile, leader_p2_class) = 
+                    if zone_id > 0 && leader_content_id != 0 {
+                        lookup_parse_percentiles(&all_parse_docs, leader_content_id, &zone_key, encounter_id, secondary_encounter_id)
+                    } else {
+                        (None, "parse-none".to_string(), None, "parse-none".to_string())
+                    };
 
                 renderable_containers.push(crate::template::listings::RenderableListing {
                     container,
