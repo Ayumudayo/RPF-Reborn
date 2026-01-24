@@ -28,4 +28,14 @@ const TRANSLATIONS = {
     time_now: { en: "now", ja: "たった今", de: "jetzt", fr: "maintenant", },
     expires_at: { en: "Expires at", ja: "終了予定", de: "Läuft ab um", fr: "Expire à", },
     updated_at: { en: "Updated at", ja: "更新時刻", de: "Aktualisiert um", fr: "Mis à jour à", },
+    // 콘텐츠 타입 필터 번역
+    content_type: { en: "Content Type", ja: "コンテンツ種別", de: "Inhaltstyp", fr: "Type de contenu", },
+    ultimate: { en: "Ultimate", ja: "絶", de: "Ultimativ", fr: "Fatal", },
+    savage: { en: "Savage", ja: "零式", de: "Episch", fr: "Sadique", },
+    extreme: { en: "Extreme", ja: "極", de: "Extrem", fr: "Extrême", },
+    chaotic: { en: "Chaotic", ja: "カオティック", de: "Chaotisch", fr: "Chaotique", },
+    content_search: { en: "Content Search", ja: "コンテンツ検索", de: "Inhaltssuche", fr: "Recherche de contenu", },
+    content_select: { en: "Content", ja: "コンテンツ", de: "Inhalt", fr: "Contenu", },
+    select_content: { en: "Select Content...", ja: "コンテンツを選択...", de: "Inhalt auswählen...", fr: "Sélectionner...", },
+    search: { en: "Search...", ja: "検索...", de: "Suchen...", fr: "Rechercher...", },
 };

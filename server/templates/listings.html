@@ -114,7 +114,46 @@ xivpf - listings
                                     Job</span></label>
                         </div>
                     </div>
+
+                    <!-- Content Type Filter & Select -->
+                    <div class="filter-section">
+                        <h4 data-i18n="content_type">Content Type</h4>
+                        <div class="chip-group" id="content-type-filter">
+                            <input type="checkbox" id="ct-ultimate" value="28">
+                            <label for="ct-ultimate" class="chip"><span data-i18n="ultimate">Ultimate</span></label>
+
+                            <input type="checkbox" id="ct-savage" value="5">
+                            <label for="ct-savage" class="chip"><span data-i18n="savage">Savage</span></label>
+
+                            <input type="checkbox" id="ct-extreme" value="4">
+                            <label for="ct-extreme" class="chip"><span data-i18n="extreme">Extreme</span></label>
+
+                            <input type="checkbox" id="ct-chaotic" value="37">
+                            <label for="ct-chaotic" class="chip"><span data-i18n="chaotic">Chaotic</span></label>
+                        </div>
+
+                        <div style="margin-top: 0.75rem;">
+                            <div class="content-select-container">
+                                <button type="button" class="content-select-trigger" id="content-select-trigger">
+                                    <span data-i18n="select_content">Select Content...</span>
+                                    <svg viewBox="0 0 24 24" fill="currentColor" class="dropdown-arrow">
+                                        <path d="M7 10l5 5 5-5z" />
+                                    </svg>
+                                </button>
+                                <div class="content-select-dropdown" id="content-select-dropdown">
+                                    <div class="content-select-list" id="content-select-list">
+                                        <!-- 동적으로 채워짐 -->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="selected-contents" id="selected-contents">
+                                <!-- 선택된 콘텐츠 태그 표시 -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+
 
             </div>
         </div>
@@ -130,7 +169,8 @@ xivpf - listings
             data-pf-category="{{ listing.html_pf_category() }}" data-joinable-roles="{{ listing.joinable_roles() }}"
             data-num-parties="{{ listing.num_parties }}" data-high-end="{{ listing.high_end() }}"
             data-objective="{{ listing.objective.bits() }}" data-conditions="{{ listing.conditions.bits() }}"
-            data-search-area="{{ listing.search_area.bits() }}" data-min-item-level="{{ listing.min_item_level }}">
+            data-search-area="{{ listing.search_area.bits() }}" data-min-item-level="{{ listing.min_item_level }}"
+            data-duty-id="{{ listing.duty }}" data-content-kind="{{ listing.content_kind() }}">
 
             <div class="left">
                 {%- let duty_class %}

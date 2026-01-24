@@ -12,6 +12,8 @@
         conditions: 0,
         onePlayerPerJob: false,
         minItemLevel: 0,
+        contentTypes: [], // ContentKind 값 배열 (28=Ultimate, 5=Savage, 4=Extreme, 37=Chaotic)
+        selectedContents: [], // 선택된 콘텐츠 이름 배열
     };
 
     function addJsClass() {
@@ -207,14 +209,30 @@
             return itemLevel >= state.minItemLevel;
         }
 
+        // 콘텐츠 타입 필터 (Ultimate=28, Savage=5, Extreme=4, Chaotic=37)
+        function contentTypeFilter(item) {
+            if (state.contentTypes.length === 0) return true;
+            let contentKind = parseInt(item.elm.dataset.contentKind || '0');
+            return state.contentTypes.includes(contentKind);
+        }
+
+        // 선택된 콘텐츠 필터 (duty name 배열 기반)
+        function selectedContentsFilter(item) {
+            if (state.selectedContents.length === 0) return true;
+            let dutyName = item.elm.querySelector('.duty');
+            if (!dutyName) return true;
+            return state.selectedContents.includes(dutyName.textContent);
+        }
+
         state.list.filter(item =>
             dataCentreFilter(item) &&
             roleFilter(item) &&
             highEndFilter(item) &&
             objectiveFilter(item) &&
-            objectiveFilter(item) &&
             conditionFilter(item) &&
-            minItemLevelFilter(item)
+            minItemLevelFilter(item) &&
+            contentTypeFilter(item) &&
+            selectedContentsFilter(item)
         );
     }
 
@@ -300,7 +318,131 @@
             }
             refilter();
         });
+
+        // 콘텐츠 타입 필터 (Ultimate, Savage, Extreme, Chaotic)
+        const contentTypeFilter = document.getElementById('content-type-filter');
+        if (contentTypeFilter) {
+            contentTypeFilter.addEventListener('change', (e) => {
+                const val = parseInt(e.target.value);
+                if (e.target.checked) {
+                    if (!state.contentTypes.includes(val)) {
+                        state.contentTypes.push(val);
+                    }
+                } else {
+                    state.contentTypes = state.contentTypes.filter(v => v !== val);
+                }
+                refilter();
+            });
+        }
+
+        // 콘텐츠 멀티셀렉트 드롭다운 설정
+        setupContentSelect();
     }
+
+    // 콘텐츠 멀티셀렉트 드롭다운
+    function setupContentSelect() {
+        const trigger = document.getElementById('content-select-trigger');
+        const container = trigger?.closest('.content-select-container');
+        const dropdown = document.getElementById('content-select-dropdown');
+        const listEl = document.getElementById('content-select-list');
+        const selectedEl = document.getElementById('selected-contents');
+
+        if (!trigger || !container || !dropdown || !listEl) return;
+
+        // 모든 리스팅에서 고유한 duty 이름 수집 (필터로 숨겨진 것도 포함)
+        function collectDutyNames() {
+            const names = new Set();
+            // 제외할 이름들 (None 등)
+            const excludeNames = ['None', '設定なし', 'Nicht festgelegt', 'Non spécifiée'];
+            // state.list의 모든 items에서 수집 (필터 상태 무관)
+            if (state.list && state.list.items) {
+                state.list.items.forEach(item => {
+                    const dutyEl = item.elm.querySelector('.duty');
+                    if (dutyEl && dutyEl.textContent && !excludeNames.includes(dutyEl.textContent)) {
+                        names.add(dutyEl.textContent);
+                    }
+                });
+            }
+            return Array.from(names).sort();
+        }
+
+        // 드롭다운 리스트 생성
+        function populateList() {
+            listEl.innerHTML = '';
+            const dutyNames = collectDutyNames();
+            dutyNames.forEach(name => {
+                const item = document.createElement('label');
+                item.className = 'content-select-item';
+                item.innerHTML = `
+                    <input type="checkbox" value="${name}" ${state.selectedContents.includes(name) ? 'checked' : ''}>
+                    <span>${name}</span>
+                `;
+                listEl.appendChild(item);
+            });
+        }
+
+        // 선택된 콘텐츠 태그 렌더링
+        function renderSelectedTags() {
+            selectedEl.innerHTML = '';
+            state.selectedContents.forEach(name => {
+                const tag = document.createElement('span');
+                tag.className = 'selected-content-tag';
+                tag.innerHTML = `${name}<span class="remove-btn">✕</span>`;
+                tag.querySelector('.remove-btn').addEventListener('click', () => {
+                    state.selectedContents = state.selectedContents.filter(n => n !== name);
+                    renderSelectedTags();
+                    refilter();
+                    // 체크박스 동기화
+                    const checkbox = listEl.querySelector(`input[value="${name}"]`);
+                    if (checkbox) checkbox.checked = false;
+                });
+                selectedEl.appendChild(tag);
+            });
+
+            // 트리거 텍스트 업데이트
+            const triggerText = trigger.querySelector('span');
+            if (state.selectedContents.length > 0) {
+                triggerText.textContent = `${state.selectedContents.length} selected`;
+            } else {
+                triggerText.textContent = TRANSLATIONS.select_content?.[state.lang] || 'Select Content...';
+            }
+        }
+
+        // 드롭다운 토글
+        trigger.addEventListener('click', () => {
+            const isOpen = container.classList.toggle('open');
+            if (isOpen) {
+                populateList();
+            }
+        });
+
+        // 외부 클릭 시 닫기
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                container.classList.remove('open');
+            }
+        });
+
+        // 체크박스 변경
+        listEl.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                const name = e.target.value;
+                if (e.target.checked) {
+                    if (!state.selectedContents.includes(name)) {
+                        state.selectedContents.push(name);
+                    }
+                } else {
+                    state.selectedContents = state.selectedContents.filter(n => n !== name);
+                }
+                renderSelectedTags();
+                refilter();
+            }
+        });
+
+        // 초기 렌더링
+        renderSelectedTags();
+    }
+
 
     function setupPaginationNav() {
         let prev = document.querySelector('.page-btn.prev');
