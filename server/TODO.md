@@ -19,8 +19,8 @@
 - [x] 3번 정렬 → 단일 정렬로 통합
 - 위치: `handlers.rs` L25-35
 
-### 4. ParseDisplay Struct Extraction
-- [ ] `RenderableListing`, `RenderableMember`의 Parse 필드 별도 구조체로 추출
+### 4. ~~ParseDisplay Struct Extraction~~ ✅
+- [x] `RenderableListing`, `RenderableMember`의 Parse 필드 별도 구조체로 추출
 - 위치: `template/listings.rs`
 
 ## Low Priority (Optional)

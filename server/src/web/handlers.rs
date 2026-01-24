@@ -142,11 +142,11 @@ pub async fn listings_handler(
                         Some(crate::template::listings::RenderableMember { 
                             job_id, 
                             player,
-                            parse_percentile: p1_percentile,
-                            parse_color_class: p1_class,
-                            secondary_parse_percentile: p2_percentile,
-                            secondary_parse_color_class: p2_class,
-                            has_secondary: secondary_encounter_id.is_some(),
+                            parse: crate::template::listings::ParseDisplay::new(
+                                p1_percentile, p1_class,
+                                p2_percentile, p2_class,
+                                secondary_encounter_id.is_some(),
+                            ),
                         })
                     })
                     .collect();
@@ -163,11 +163,11 @@ pub async fn listings_handler(
                 renderable_containers.push(crate::template::listings::RenderableListing {
                     container,
                     members,
-                    leader_parse_percentile: leader_p1_percentile,
-                    leader_parse_color_class: leader_p1_class,
-                    leader_secondary_parse_percentile: leader_p2_percentile,
-                    leader_secondary_parse_color_class: leader_p2_class,
-                    leader_has_secondary: secondary_encounter_id.is_some(),
+                    leader_parse: crate::template::listings::ParseDisplay::new(
+                        leader_p1_percentile, leader_p1_class,
+                        leader_p2_percentile, leader_p2_class,
+                        secondary_encounter_id.is_some(),
+                    ),
                 });
             }
 

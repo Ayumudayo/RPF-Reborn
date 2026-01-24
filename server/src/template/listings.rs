@@ -18,11 +18,45 @@ pub struct RenderableListing {
     pub container: QueriedListing,
     pub members: Vec<RenderableMember>,
     /// 파티장 로그 정보 (멤버 정보가 없어도 표시 가능)
-    pub leader_parse_percentile: Option<u8>,
-    pub leader_parse_color_class: String,
-    pub leader_secondary_parse_percentile: Option<u8>,
-    pub leader_secondary_parse_color_class: String,
-    pub leader_has_secondary: bool,
+    pub leader_parse: ParseDisplay,
+}
+
+/// Parse percentile 표시 정보
+#[derive(Debug, Clone, Default)]
+pub struct ParseDisplay {
+    pub primary_percentile: Option<u8>,
+    pub primary_color_class: String,
+    pub secondary_percentile: Option<u8>,
+    pub secondary_color_class: String,
+    pub has_secondary: bool,
+}
+
+impl ParseDisplay {
+    /// 기본값 생성 (데이터 없음 상태)
+    pub fn none() -> Self {
+        Self {
+            primary_percentile: None,
+            primary_color_class: "parse-none".to_string(),
+            secondary_percentile: None,
+            secondary_color_class: "parse-none".to_string(),
+            has_secondary: false,
+        }
+    }
+    
+    /// 데이터로부터 생성
+    pub fn new(
+        p1: Option<u8>, p1_class: String,
+        p2: Option<u8>, p2_class: String,
+        has_secondary: bool,
+    ) -> Self {
+        Self {
+            primary_percentile: p1,
+            primary_color_class: p1_class,
+            secondary_percentile: p2,
+            secondary_color_class: p2_class,
+            has_secondary,
+        }
+    }
 }
 
 /// 멤버 정보 + 해당 슬롯의 잡 ID
@@ -30,11 +64,7 @@ pub struct RenderableListing {
 pub struct RenderableMember {
     pub job_id: u8,
     pub player: crate::player::Player,
-    pub parse_percentile: Option<u8>,
-    pub parse_color_class: String,
-    pub secondary_parse_percentile: Option<u8>,
-    pub secondary_parse_color_class: String,
-    pub has_secondary: bool,
+    pub parse: ParseDisplay,
 }
 
 impl RenderableMember {
