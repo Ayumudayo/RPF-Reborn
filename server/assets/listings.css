@@ -443,6 +443,8 @@
     display: inline-flex;
     gap: 0.2em;
     flex-shrink: 0;
+    margin-right: 0;
+    /* 글로벌 .parse-dual의 margin-right: 0.3em 오버라이드 */
 }
 
 #listings>.listing .creator .text {
@@ -450,7 +452,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
-    /* margin-right 제거 - 박스의 margin-left로 제어 */
+    flex-grow: 1;
+    /* flex-grow로 남은 공간을 차지하여 parse가 오른쪽에 고정되도록 함 */
 }
 
 /* FFLogs 공식 색상 체계 */
