@@ -31,3 +31,13 @@
   - `mapping.rs` ← 기존 `fflogs_mapping.rs`  
   - `cache.rs` ← Parse 캐시 타입 (`mongo.rs`에서 분리)
 - 현재 기능 정상 동작 확인
+
+### 6. ~~Domain-based Directory Restructuring~~ ✅
+- [x] `domain/` 레이어 생성
+  - `listing/` ← `listing.rs`, `listing_container.rs`
+  - `player/` ← `player.rs`
+  - `stats/` ← `stats.rs`
+- [x] `infra/` 레이어 생성
+  - `mongo.rs`
+  - `fflogs/`
+- [x] 하위 호환성을 위한 re-export 추가
