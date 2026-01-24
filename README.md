@@ -1,6 +1,14 @@
-# Remote Party Finder
+# Remote Party Finder Reborn
 
 A tool to synchronize FFXIV Party Finder listings to a web interface, integrated with FFLogs for automatic parse data display.
+
+## Disclaimer
+
+This is a fork of the [original Remote Party Finder project](https://github.com/zeroeightysix/remote-party-finder) by zeroeightysix.
+
+I have no plans to publicly release this plugin.
+
+It was created purely out of personal interest and can be considered a proof of concept.
 
 ## Key Features
 
@@ -8,8 +16,8 @@ A tool to synchronize FFXIV Party Finder listings to a web interface, integrated
 - **FFLogs Integration**: automatically fetches and displays Best Performance Average (Parse) for party members and leaders.
   - Supports Batch GraphQL queries for efficient data retrieval (solving N+1 query problems).
   - Caches parse data in MongoDB (24-hour expiration) to respect API rate limits.
-- **Modern Web UI**: Clean, responsive interface with parse color coding (Grey to Gold/Pink).
-- **Optimized Performance**: Rust-backed server using Warp and Tokio for high concurrency.
+- **Modern Web UI**: Clean, responsive interface with parse FFLOGS style color coding.
+- **Crowd Sourcing**: Displays data by receiving information from each player using the plugin.
 
 ## Architecture
 
@@ -40,9 +48,9 @@ The project consists of two main components:
 ### Prerequisites
 
 - **Rust** (Latest Stable)
-- **MongoDB** (Running locally or accessible remotely)
+- **MongoDB**
 - **FFXIV with Dalamud** (for the plugin)
-- **FFLogs V2 API Client** (ClientId & ClientSecret)
+- **FFLogs V2 API Client**
 
 ### Server Setup
 
@@ -55,7 +63,7 @@ The project consists of two main components:
     client_secret = "YOUR_CLIENT_SECRET"
     
     [mongo]
-    connection_string = "mongodb://localhost:27017"
+    connection_string = "YOUR_MONGODB_CONNECTION_STRING"
     ```
 4.  Run the server:
     ```bash
@@ -66,10 +74,11 @@ The project consists of two main components:
 ### Plugin Setup
 
 1.  Open `csharp/RemotePartyFinder.sln` in Visual Studio.
-2.  Build the solution (Release mode recommended).
+2.  Build the solution.
 3.  Load the built plugin in FFXIV using Dalamud's dev plugins feature.
 4.  The plugin will automatically start sending Party Finder data to the configured server endpoint.
 
 ## License
 
-(No license specified yet)
+No license specified yet.
+Since the original repository also does not have a license set, the license configuration is postponed.
