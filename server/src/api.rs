@@ -29,63 +29,84 @@ fn listings(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
 
         match listings {
             Ok(listings) => {
-                // Collect all member IDs
+                // Collect all member IDs for player fetch
                 let all_content_ids: Vec<u64> = listings.iter()
                     .flat_map(|l| l.listing.member_content_ids.iter().map(|&id| id as u64))
                     .collect();
                 
-                // Fetch players
+                // Fetch players (Batch 1)
                 let players = get_players_by_content_ids(state.players_collection(), &all_content_ids).await.unwrap_or_default();
                 let player_map: HashMap<u64, crate::player::Player> = players.into_iter().map(|p| (p.content_id, p)).collect();
 
-                // Fetch parse caches for high-end duties
-                // Note: We need to know the zone_id for each listing to fetch relevant parses.
-                // For optimal performance, we should batch fetch all relevant parses.
-                // However, different listings might trigger different zone IDs.
-                // For now, let's fetch parses inside the map loop or pre-fetch if possible.
-                // Simpler approach: Fetch parses per listing (or batch by zone if needed).
-                // Given the small number of listings, per-listing fetch is acceptable for now, 
-                // but we need to supply the correct zone_id based on the duty.
+                // Prepare for Batch 2: Collect Content IDs per Zone ID
+                let mut zone_requests: HashMap<u16, Vec<u64>> = HashMap::new();
+                // Store calculated zone info to avoid recalculating in the second loop
+                let mut listing_meta: HashMap<u32, (u16, u16)> = HashMap::new();
+
+                for ql in &listings {
+                    let duty_id = ql.listing.duty;
+                    let fflogs_info = crate::fflogs::mapping::get_fflogs_encounter(duty_id);
+                    let (zone_id, encounter_id) = if let Some(info) = fflogs_info {
+                        (info.zone_id as u32, info.encounter_id)
+                    } else {
+                        (0, 0)
+                    };
+                    
+                    listing_meta.insert(ql.listing.id, (zone_id as u16, encounter_id as u16));
+
+                    if zone_id > 0 {
+                        let entry = zone_requests.entry(zone_id as u16).or_insert_with(Vec::new);
+                        for &mid in &ql.listing.member_content_ids {
+                            entry.push(mid as u64);
+                        }
+                    }
+                }
+
+                // Batch Query: Fetch parses for each Zone
+                // (ZoneID, ContentID) -> ZoneCache
+                let mut parse_data_map: HashMap<(u16, u64), crate::mongo::ZoneCache> = HashMap::new();
+
+                for (zone_id, content_ids) in zone_requests {
+                    // Dedup content_ids
+                    let mut unique_ids = content_ids;
+                    unique_ids.sort_unstable();
+                    unique_ids.dedup();
+
+                    if let Ok(caches) = crate::mongo::get_zone_caches(state.parse_collection(), &unique_ids, zone_id as u32).await {
+                        for (cid, cache) in caches {
+                            parse_data_map.insert((zone_id, cid), cache);
+                        }
+                    }
+                }
                 
                 let mut listings_with_members = Vec::new();
                 for ql in listings {
                     let member_ids = ql.listing.member_content_ids.clone();
                     let mut container: ApiReadableListingContainer = ql.into();
                     
-                    // Determine FFLogs Zone ID/Encounter ID if applicable
-                    let fflogs_info = crate::fflogs::mapping::get_fflogs_encounter(container.listing.duty_info.as_ref().map(|d| d.id).unwrap_or(0) as u16);
-                    let (zone_id, encounter_id) = if let Some(info) = fflogs_info {
-                        (info.zone_id, info.encounter_id)
-                    } else {
-                        (0, 0)
-                    };
+                    // Retrieve pre-calculated info
+                    let (zone_id, encounter_id) = listing_meta.get(&container.listing.id).copied().unwrap_or((0, 0));
 
                     let mut members = Vec::new();
                     
-                    // Optimisation: Fetch zone caches for all members of this listing at once if it's a high-end duty
-                    let zone_caches: std::collections::HashMap<u64, crate::mongo::ZoneCache> = if zone_id > 0 {
-                        let member_u64_ids: Vec<u64> = member_ids.iter().map(|&id| id as u64).collect();
-                        crate::mongo::get_zone_caches(state.parse_collection(), &member_u64_ids, zone_id)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        std::collections::HashMap::new()
-                    };
-
                     for id in member_ids {
                         let uid = id as u64;
                         if let Some(p) = player_map.get(&uid) {
-                            // Zone 캐시에서 해당 encounter의 parse 조회
-                            let (percentile, color_class) = if let Some(zone_cache) = zone_caches.get(&uid) {
-                                let enc_key = encounter_id.to_string();
-                                if let Some(enc_parse) = zone_cache.encounters.get(&enc_key) {
-                                    if enc_parse.percentile < 0.0 {
-                                        (None, "parse-none".to_string())
+                            // Lookup in pre-fetched map
+                            let (percentile, color_class) = if zone_id > 0 {
+                                if let Some(zone_cache) = parse_data_map.get(&(zone_id, uid)) {
+                                    let enc_key = encounter_id.to_string();
+                                    if let Some(enc_parse) = zone_cache.encounters.get(&enc_key) {
+                                        if enc_parse.percentile < 0.0 {
+                                            (None, "parse-none".to_string())
+                                        } else {
+                                            (
+                                                Some(enc_parse.percentile.round() as u8),
+                                                crate::fflogs::mapping::percentile_color_class(enc_parse.percentile).to_string(),
+                                            )
+                                        }
                                     } else {
-                                        (
-                                            Some(enc_parse.percentile.round() as u8),
-                                            crate::fflogs::mapping::percentile_color_class(enc_parse.percentile).to_string(),
-                                        )
+                                        (None, "parse-none".to_string())
                                     }
                                 } else {
                                     (None, "parse-none".to_string())
