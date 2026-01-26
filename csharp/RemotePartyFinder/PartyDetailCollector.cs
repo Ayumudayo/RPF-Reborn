@@ -117,6 +117,13 @@ internal class PartyDetailCollector : IDisposable {
             try {
                 var json = JsonConvert.SerializeObject(detail);
                 foreach (var uploadUrl in this.Plugin.Configuration.UploadUrls.Where(u => u.IsEnabled)) {
+                    // Circuit Breaker
+                    if (uploadUrl.FailureCount >= this.Plugin.Configuration.CircuitBreakerFailureThreshold) {
+                        if ((DateTime.UtcNow - uploadUrl.LastFailureTime).TotalMinutes < this.Plugin.Configuration.CircuitBreakerBreakDurationMinutes) {
+                            continue;
+                        }
+                    }
+
                     var baseUrl = uploadUrl.Url.TrimEnd('/');
 
                     if (baseUrl.EndsWith("/contribute/multiple")) {
@@ -127,11 +134,25 @@ internal class PartyDetailCollector : IDisposable {
 
                     var detailUrl = baseUrl + "/contribute/detail";
                     
-                    var resp = await this.Client.PostAsync(detailUrl, new StringContent(json) {
-                        Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
-                    });
-                    var output = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.Debug($"PartyDetailCollector: {detailUrl}: {output}");
+                    try {
+                        var resp = await this.Client.PostAsync(detailUrl, new StringContent(json) {
+                            Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
+                        });
+
+                        if (resp.IsSuccessStatusCode) {
+                            uploadUrl.FailureCount = 0;
+                        } else {
+                            uploadUrl.FailureCount++;
+                            uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        }
+
+                        var output = await resp.Content.ReadAsStringAsync();
+                        Plugin.Log.Debug($"PartyDetailCollector: {detailUrl}: {resp.StatusCode} {output}");
+                    } catch (Exception ex) {
+                        uploadUrl.FailureCount++;
+                        uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        Plugin.Log.Error($"PartyDetailCollector upload error to {detailUrl}: {ex.Message}");
+                    }
                 }
             } catch (Exception e) {
                 Plugin.Log.Error($"PartyDetailCollector upload error: {e.Message}");

@@ -35,10 +35,33 @@ public class ConfigWindow : Window, IDisposable
 
     public override void Draw()
     {
+        if (ImGui.BeginTabBar("ConfigTabs"))
+        {
+            if (ImGui.BeginTabItem("Settings"))
+            {
+                DrawSettingsTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Debug"))
+            {
+                DrawDebugTab();
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
+    }
+
+    private void DrawSettingsTab()
+    {
         var isAdvanced = _configuration.AdvancedSettingsEnabled;
         ImGui.TextWrapped(
             "This section is for advanced users to configure which services to send party finder data to. " +
             "Only enable if you know what you are doing.");
+        
+        ImGui.Spacing();
+        
         if (ImGui.Checkbox("Enable Advanced Settings", ref isAdvanced))
         {
             _configuration.AdvancedSettingsEnabled = isAdvanced;
@@ -47,6 +70,10 @@ public class ConfigWindow : Window, IDisposable
 
         if (!isAdvanced) return;
 
+        ImGui.Separator();
+        ImGui.Spacing();
+        
+        ImGui.Text("Upload URLs");
         
         using (ImRaii.Table((ImU8String)"uploadUrls", 3, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.Borders))
         {
@@ -123,10 +150,93 @@ public class ConfigWindow : Window, IDisposable
             ResetToDefault();
         }
 
-        if (string.IsNullOrEmpty(_uploadUrlError)) return;
-        
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(1, 0, 0, 1), _uploadUrlError);
+        if (!string.IsNullOrEmpty(_uploadUrlError))
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1, 0, 0, 1), _uploadUrlError);
+        }
+    }
+
+    private void DrawDebugTab()
+    {
+        ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "[Circuit Breaker Configuration]");
+        ImGui.Spacing();
+
+        var threshold = _configuration.CircuitBreakerFailureThreshold;
+        if (ImGui.SliderInt("Failure Threshold", ref threshold, 1, 20, "%d failures"))
+        {
+            _configuration.CircuitBreakerFailureThreshold = threshold;
+            _configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Number of consecutive failures before pausing uploads.");
+        }
+
+        var duration = _configuration.CircuitBreakerBreakDurationMinutes;
+        if (ImGui.SliderInt("Break Duration", ref duration, 1, 60, "%d min"))
+        {
+            _configuration.CircuitBreakerBreakDurationMinutes = duration;
+            _configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Duration to pause uploads after threshold is reached.");
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.Text("Endpoint Status:");
+
+        if (ImGui.BeginTable("cbStatusTable", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+        {
+            ImGui.TableSetupColumn("URL", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Failures", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableHeadersRow();
+
+            foreach (var url in _configuration.UploadUrls)
+            {
+                ImGui.TableNextRow();
+                
+                ImGui.TableSetColumnIndex(0);
+                ImGui.Text(url.Url);
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.Text($"{url.FailureCount} / {_configuration.CircuitBreakerFailureThreshold}");
+
+                ImGui.TableSetColumnIndex(2);
+                bool isOpen = url.FailureCount >= _configuration.CircuitBreakerFailureThreshold;
+                if (isOpen)
+                {
+                    // Check if waiting period is over
+                    var timeLeft = TimeSpan.FromMinutes(_configuration.CircuitBreakerBreakDurationMinutes) - (DateTime.UtcNow - url.LastFailureTime);
+                    if (timeLeft.TotalSeconds > 0)
+                    {
+                        ImGui.TextColored(new Vector4(1, 0, 0, 1), $"OPEN ({timeLeft.TotalSeconds:F0}s)");
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(1, 1, 0, 1), "HALF-OPEN");
+                    }
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0, 1, 0, 1), "CLOSED");
+                }
+
+                ImGui.TableSetColumnIndex(3);
+                if (ImGui.Button($"Reset##{url.GetHashCode()}"))
+                {
+                    url.FailureCount = 0;
+                    url.LastFailureTime = DateTime.MinValue;
+                }
+            }
+            ImGui.EndTable();
+        }
     }
 
     private void ResetToDefault()

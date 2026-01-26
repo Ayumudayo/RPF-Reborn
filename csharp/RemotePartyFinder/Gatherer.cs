@@ -58,6 +58,14 @@ internal class Gatherer : IDisposable {
 
                 foreach (var uploadUrl in Plugin.Configuration.UploadUrls.Where(uploadUrl => uploadUrl.IsEnabled))
                 {
+                    // Circuit Breaker: 설정된 횟수 이상 실패 시 설정된 시간(분)만큼 중단
+                    if (uploadUrl.FailureCount >= Plugin.Configuration.CircuitBreakerFailureThreshold) {
+                        if ((DateTime.UtcNow - uploadUrl.LastFailureTime).TotalMinutes < Plugin.Configuration.CircuitBreakerBreakDurationMinutes) {
+                            continue;
+                        }
+                        // 설정된 시간이 지났으면 재시도 허용 (Half-Open)
+                    }
+
                     var baseUrl = uploadUrl.Url.TrimEnd('/');
 
                     if (baseUrl.EndsWith("/contribute/multiple")) {
@@ -68,11 +76,26 @@ internal class Gatherer : IDisposable {
 
                     var targetUrl = baseUrl + "/contribute/multiple";
 
-                    var resp = await this.Client.PostAsync(targetUrl, new StringContent(json) {
-                        Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
-                    });
-                    var output = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.Info($"{targetUrl}:\n{output}");
+                    try {
+                        var resp = await this.Client.PostAsync(targetUrl, new StringContent(json) {
+                            Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
+                        });
+                        
+                        // 성공 여부 확인
+                        if (resp.IsSuccessStatusCode) {
+                            uploadUrl.FailureCount = 0;
+                        } else {
+                            uploadUrl.FailureCount++;
+                            uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        }
+                        
+                        var output = await resp.Content.ReadAsStringAsync();
+                        Plugin.Log.Info($"{targetUrl}: {resp.StatusCode}\n{output}");
+                    } catch (Exception ex) {
+                        uploadUrl.FailureCount++;
+                        uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        Plugin.Log.Error($"Gatherer upload error to {targetUrl}: {ex.Message}");
+                    }
                 }
             });
         }

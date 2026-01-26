@@ -106,6 +106,13 @@ internal class PlayerCollector : IDisposable {
                 var success = false;
 
                 foreach (var uploadUrl in this.Plugin.Configuration.UploadUrls.Where(u => u.IsEnabled)) {
+                    // Circuit Breaker
+                    if (uploadUrl.FailureCount >= this.Plugin.Configuration.CircuitBreakerFailureThreshold) {
+                        if ((DateTime.UtcNow - uploadUrl.LastFailureTime).TotalMinutes < this.Plugin.Configuration.CircuitBreakerBreakDurationMinutes) {
+                            continue;
+                        }
+                    }
+
                     var baseUrl = uploadUrl.Url.TrimEnd('/');
                     
                     // Base URL 정리: /contribute/multiple 또는 /contribute 로 끝나면 해당 부분 제거
@@ -117,16 +124,26 @@ internal class PlayerCollector : IDisposable {
                     
                     var playersUrl = baseUrl + "/contribute/players";
                     
-                    var resp = await this.Client.PostAsync(playersUrl, new StringContent(json) {
-                        Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
-                    });
-                    
-                    if (resp.IsSuccessStatusCode) {
-                        success = true;
+                    try {
+                        var resp = await this.Client.PostAsync(playersUrl, new StringContent(json) {
+                            Headers = { ContentType = MediaTypeHeaderValue.Parse("application/json") },
+                        });
+                        
+                        if (resp.IsSuccessStatusCode) {
+                            success = true; // 적어도 하나의 서버에 성공함
+                            uploadUrl.FailureCount = 0;
+                        } else {
+                            uploadUrl.FailureCount++;
+                            uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        }
+                        
+                        var output = await resp.Content.ReadAsStringAsync();
+                        Plugin.Log.Debug($"PlayerCollector: {playersUrl}: {resp.StatusCode} {output}");
+                    } catch (Exception ex) {
+                        uploadUrl.FailureCount++;
+                        uploadUrl.LastFailureTime = DateTime.UtcNow;
+                        Plugin.Log.Error($"PlayerCollector upload error to {playersUrl}: {ex.Message}");
                     }
-                    
-                    var output = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.Debug($"PlayerCollector: {playersUrl}: {output}");
                 }
 
                 // 하나라도 성공했으면 캐시 업데이트
