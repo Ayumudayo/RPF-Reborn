@@ -159,10 +159,14 @@ xivpf - listings
             </div>
         </div>
     </div>
+    {%- if containers.is_empty() %}
+    <em class="no-listings" data-i18n="no_listings">No listings - download the plugin to help contribute!</em>
+    {%- endif %}
+
+    <em id="filter-no-listings" class="no-listings" style="display:none;" data-i18n="no_filter_results">No results found
+        matching your filters</em>
+
     <div id="listings" class="list">
-        {%- if containers.is_empty() %}
-        <em class="no-listings" data-i18n="no_listings">No listings - download the plugin to help contribute!</em>
-        {%- endif %}
         {%- for renderable in containers %}
         {%- let listing = renderable.container.listing.borrow() %}
         <div class="listing" data-id="{{ listing.id }}"

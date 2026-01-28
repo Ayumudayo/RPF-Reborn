@@ -128,12 +128,10 @@
 
         // Language priority: cookie > dataset.accept > localStorage
         let language = document.getElementById('language');
-        let cookie = document.cookie
-            .split(';')
-            .find(row => row.trim().startsWith('lang='));
+        let cookieMatch = document.cookie.match(/(?:^|; )lang=([^;]*)/);
 
-        if (cookie !== undefined) {
-            state.lang = decodeURIComponent(cookie.split('=')[1]);
+        if (cookieMatch) {
+            state.lang = decodeURIComponent(cookieMatch[1]);
         } else if (language && language.dataset.accept) {
             state.lang = language.dataset.accept;
         } else if (state.lang === null) {
@@ -142,6 +140,23 @@
     }
 
     function setUpList() {
+        const listEl = document.getElementById('listings');
+        if (!listEl || listEl.children.length === 0) {
+            // 리스트가 비어있으면 초기화 에러를 방지하기 위해 Mock 객체 반환
+            return {
+                filter: function () { },
+                on: function () { },
+                items: [],
+                visibleItems: [],
+                size: function () { return 0; },
+                show: function () { },
+                reIndex: function () { },
+                i: 1,
+                page: 50,
+                matchingItems: []
+            };
+        }
+
         let options = {
             valueNames: [
                 'duty',
@@ -234,6 +249,19 @@
             contentTypeFilter(item) &&
             selectedContentsFilter(item)
         );
+
+        // 필터 결과가 없을 때 메시지 표시
+        const noFilterResults = document.getElementById('filter-no-listings');
+        const serverNoListings = document.querySelector('.no-listings:not(#filter-no-listings)');
+
+        // 서버에 리스팅이 아예 없는 경우는 HTML에서 처리됨 (listings.html)
+        // 여기서는 "서버에는 있는데 필터로 다 가려진 경우"를 처리
+        // state.list.visibleItems.length === 0 이고 state.list.items.length > 0 일 때
+        if (state.list.visibleItems.length === 0 && state.list.items.length > 0) {
+            if (noFilterResults) noFilterResults.style.display = 'block';
+        } else {
+            if (noFilterResults) noFilterResults.style.display = 'none';
+        }
     }
 
     function setUpDataCentreFilter() {
@@ -241,6 +269,11 @@
 
         let dataCentres = {};
         for (let item of state.list.items) {
+            // High-end 필터가 켜져있으면(항상 true), High-end가 아닌 것은 카운트에서 제외
+            if (state.highEnd && item.elm.dataset.highEnd !== 'true') {
+                continue;
+            }
+
             let centre = item.values().centre;
             if (!dataCentres.hasOwnProperty(centre)) {
                 dataCentres[centre] = 0;
