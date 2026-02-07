@@ -79,8 +79,38 @@ internal class Program
         var manualTranslations = new Dictionary<string, Dictionary<string, string>>
         {
             ["options"] = new() { ["en"] = "Options", ["ja"] =  "オプション", ["de"] = "Optionen", ["fr"] = "Options" },
-            ["no_listings"] = new() { ["en"] = "No listings - download the plugin to help contribute!", ["ja"] = "募集がありません - プラグインを導入して募集情報を共有しましょう！", ["de"] = "Keine Einträge - Lade das Plugin herunter, um zu helfen!", ["fr"] = "Aucune annonce - téléchargez le plugin pour contribuer !" },
-            ["no_members"] = new() { ["en"] = "No information available for other members", ["ja"] = "他メンバーの情報がありません", ["de"] = "Keine Informationen zu anderen Mitgliedern verfügbar", ["fr"] = "Aucune information disponible pour les autres membres" }
+            ["advanced"] = new() { ["en"] = "Advanced", ["ja"] = "詳細設定", ["de"] = "Erweitert", ["fr"] = "Avancé" },
+            ["min_item_level"] = new() { ["en"] = "Min Item Level", ["ja"] = "平均IL", ["de"] = "Min. Gegenstandsstufe", ["fr"] = "Niveau d'objet min." },
+            
+            ["no_listings"] = new() { ["en"] = "No collected listing data available. Please install the plugin to contribute!", ["ja"] = "収集された募集データがありません。プラグインを導入して募集情報を共有してください！", ["de"] = "Keine gesammelten Daten verfügbar. Bitte installiere das Plugin, um beizutragen!", ["fr"] = "Aucune donnée collectée disponible. Veuillez installer le plugin pour contribuer !" },
+            ["no_members"] = new() { ["en"] = "No information available for other members", ["ja"] = "他メンバーの情報がありません", ["de"] = "Keine Informationen zu anderen Mitgliedern verfügbar", ["fr"] = "Aucune information disponible pour les autres membres" },
+            ["no_filter_results"] = new() { ["en"] = "No results found matching your filters", ["ja"] = "条件に一致する募集が見つかりませんでした", ["de"] = "Keine Ergebnisse für deine Filter gefunden", ["fr"] = "Aucun résultat ne correspond à vos filtres" },
+
+            // Time
+            ["time_in"] = new() { ["en"] = "in", ["ja"] = "後", ["de"] = "in", ["fr"] = "dans" },
+            ["time_ago"] = new() { ["en"] = "ago", ["ja"] = "前", ["de"] = "vor", ["fr"] = "il y a" },
+            ["time_seconds"] = new() { ["en"] = "seconds", ["ja"] = "秒", ["de"] = "Sekunden", ["fr"] = "secondes" },
+            ["time_second"] = new() { ["en"] = "second", ["ja"] = "秒", ["de"] = "Sekunde", ["fr"] = "seconde" },
+            ["time_minutes"] = new() { ["en"] = "minutes", ["ja"] = "分", ["de"] = "Minuten", ["fr"] = "minutes" },
+            ["time_minute"] = new() { ["en"] = "minute", ["ja"] = "分", ["de"] = "Minute", ["fr"] = "minute" },
+            ["time_hours"] = new() { ["en"] = "hours", ["ja"] = "時間", ["de"] = "Stunden", ["fr"] = "heures" },
+            ["time_hour"] = new() { ["en"] = "hour", ["ja"] = "時間", ["de"] = "Stunde", ["fr"] = "heure" },
+            ["time_now"] = new() { ["en"] = "now", ["ja"] = "たった今", ["de"] = "jetzt", ["fr"] = "maintenant" },
+            ["expires_at"] = new() { ["en"] = "Expires at", ["ja"] = "終了予定", ["de"] = "Läuft ab um", ["fr"] = "Expire à" },
+            ["updated_at"] = new() { ["en"] = "Updated at", ["ja"] = "更新時刻", ["de"] = "Aktualisiert um", ["fr"] = "Mis à jour à" },
+
+            // Content Type
+            ["content_type"] = new() { ["en"] = "Content Type", ["ja"] = "コンテンツ種別", ["de"] = "Inhaltstyp", ["fr"] = "Type de contenu" },
+            ["ultimate"] = new() { ["en"] = "Ultimate", ["ja"] = "絶", ["de"] = "Ultimativ", ["fr"] = "Fatal" },
+            ["savage"] = new() { ["en"] = "Savage", ["ja"] = "零式", ["de"] = "Episch", ["fr"] = "Sadique" },
+            ["extreme"] = new() { ["en"] = "Extreme", ["ja"] = "極", ["de"] = "Extrem", ["fr"] = "Extrême" },
+            ["chaotic"] = new() { ["en"] = "Chaotic", ["ja"] = "カオティック", ["de"] = "Chaotisch", ["fr"] = "Chaotique" },
+
+            // Search
+            ["content_search"] = new() { ["en"] = "Content Search", ["ja"] = "コンテンツ検索", ["de"] = "Inhaltssuche", ["fr"] = "Recherche de contenu" },
+            ["content_select"] = new() { ["en"] = "Content", ["ja"] = "コンテンツ", ["de"] = "Inhalt", ["fr"] = "Contenu" },
+            ["select_content"] = new() { ["en"] = "Select Content...", ["ja"] = "コンテンツを選択...", ["de"] = "Inhalt auswählen...", ["fr"] = "Sélectionner..." },
+            ["search"] = new() { ["en"] = "Search...", ["ja"] = "検索...", ["de"] = "Suchen...", ["fr"] = "Rechercher..." }
         };
 
         string GetTextFromCsv(string langCode, int id)
