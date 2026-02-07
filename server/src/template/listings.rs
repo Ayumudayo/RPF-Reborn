@@ -32,17 +32,6 @@ pub struct ParseDisplay {
 }
 
 impl ParseDisplay {
-    /// 기본값 생성 (데이터 없음 상태)
-    pub fn none() -> Self {
-        Self {
-            primary_percentile: None,
-            primary_color_class: "parse-none".to_string(),
-            secondary_percentile: None,
-            secondary_color_class: "parse-none".to_string(),
-            has_secondary: false,
-        }
-    }
-    
     /// 데이터로부터 생성
     pub fn new(
         p1: Option<u8>, p1_class: String,
