@@ -305,3 +305,158 @@ pub async fn contribute_detail_handler(
 
     Ok(warp::reply::json(&"ok"))
 }
+
+/// FFLogs 작업 요청 구조체 (Plugin -> Server response)
+#[derive(Debug, serde::Serialize)]
+pub struct ParseJob {
+    pub content_id: u64,
+    pub name: String,
+    pub server: String,
+    pub region: String,
+    pub zone_id: u32,
+    pub difficulty_id: i32,
+    pub partition: i32,
+}
+
+/// FFLogs 파싱 결과 구조체 (Plugin -> Server request)
+#[derive(Debug, serde::Deserialize)]
+pub struct ParseResult {
+    pub content_id: u64,
+    pub zone_id: u32,
+    pub encounters: HashMap<i32, f64>,
+}
+
+/// 플러그인에게 파싱 작업 할당
+pub async fn contribute_fflogs_jobs_handler(
+    state: Arc<State>,
+) -> std::result::Result<impl Reply, Infallible> {
+    // 1. 현재 활성 파티 목록 가져오기 (1시간 이내)
+    let listings = match get_current_listings(state.collection()).await {
+        Ok(l) => l,
+        Err(_) => return Ok(warp::reply::json(&Vec::<ParseJob>::new())),
+    };
+
+    let mut jobs = Vec::new();
+    let limit = 20; // 한 번에 할당할 작업 수
+
+    // Zone별 플레이어 수집, background.rs 로직 재사용
+    // 여기서는 간단하게 순회하며 필요한 작업 찾으면 바로 반환 (Greedy)
+    
+    // Shuffle listings to distribute load? (Optional, maybe later)
+
+    for container in listings {
+        if jobs.len() >= limit {
+            break;
+        }
+
+        if !container.listing.high_end() {
+            continue;
+        }
+
+        let duty_id = container.listing.duty as u16;
+        let fflogs_info = match crate::fflogs::mapping::get_fflogs_encounter(duty_id) {
+            Some(info) => info,
+            None => continue,
+        };
+
+        let member_ids: Vec<u64> = container.listing.member_content_ids.iter()
+            .map(|&id| id as u64)
+            .filter(|&id| id != 0)
+            .collect();
+
+        if member_ids.is_empty() {
+             continue;
+        }
+
+        // 캐시 확인 (Batch)
+        let cached_zones = match crate::mongo::get_zone_caches(
+            state.parse_collection(),
+            &member_ids,
+            fflogs_info.zone_id
+        ).await {
+            Ok(map) => map,
+            Err(_) => continue,
+        };
+
+        // 작업이 필요한 멤버 식별
+        let mut needing_fetch = Vec::new();
+        for id in member_ids {
+            let needed = match cached_zones.get(&id) {
+                Some(cache) => crate::mongo::is_zone_cache_expired(cache),
+                None => true,
+            };
+            if needed {
+                needing_fetch.push(id);
+            }
+        }
+
+        if needing_fetch.is_empty() {
+            continue;
+        }
+
+        // 플레이어 정보 조회 (이름/서버)
+        let players = match get_players_by_content_ids(state.players_collection(), &needing_fetch).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        for player in players {
+            if jobs.len() >= limit {
+                break;
+            }
+            let server = player.home_world_name().to_string();
+            let region = crate::fflogs::get_region_from_server(&server);
+            
+            jobs.push(ParseJob {
+                content_id: player.content_id as u64,
+                name: player.name,
+                server,
+                region: region.to_string(),
+                zone_id: fflogs_info.zone_id,
+                difficulty_id: fflogs_info.difficulty_id.unwrap_or(0) as i32,
+                partition: crate::fflogs::mapping::FFLOGS_ZONES.get(&fflogs_info.zone_id).map(|z| z.partition).unwrap_or(0) as i32,
+            });
+        }
+    }
+
+    Ok(warp::reply::json(&jobs))
+}
+
+/// 플러그인으로부터 파싱 결과 수신
+pub async fn contribute_fflogs_results_handler(
+    state: Arc<State>,
+    results: Vec<ParseResult>,
+) -> std::result::Result<impl Reply, Infallible> {
+    let mut success_count = 0;
+
+    for res in results {
+        // ParseResult -> ZoneCache 변환
+        let mut encounter_map = HashMap::new();
+        for (enc_id, percentile) in res.encounters {
+            encounter_map.insert(
+                enc_id.to_string(),
+                crate::mongo::EncounterParse {
+                    percentile: percentile as f32, // f64 -> f32
+                    job_id: 0, 
+                }
+            );
+        }
+
+        let zone_cache = crate::mongo::ZoneCache {
+            fetched_at: chrono::Utc::now(),
+            encounters: encounter_map,
+        };
+
+        // DB Upsert
+        if let Ok(_) = crate::mongo::upsert_zone_cache(
+            state.parse_collection(),
+            res.content_id,
+            res.zone_id,
+            &zone_cache
+        ).await {
+            success_count += 1;
+        }
+    }
+
+    Ok(warp::reply::json(&format!("Updated {} records", success_count)))
+}

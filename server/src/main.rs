@@ -1,5 +1,5 @@
 #![feature(try_blocks, iter_intersperse)]
-#![feature(let_chains)]
+
 
 use crate::config::Config;
 use anyhow::Context;

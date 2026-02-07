@@ -515,7 +515,7 @@ impl FFLogsClient {
 /// 서버 이름에서 리전 추출
 pub fn get_region_from_server(server: &str) -> &'static str {
     // JP (Elemental, Gaia, Mana, Meteor)
-    let jp_servers = [
+    let _jp_servers = [
         // Elemental
         "Aegis", "Atomos", "Carbuncle", "Garuda", "Gungnir", "Kujata", "Ramuh", "Tonberry", "Typhon", "Unicorn",
         // Gaia

@@ -13,7 +13,10 @@ pub fn router(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
         .or(contribute(Arc::clone(&state)))
         .or(contribute_multiple(Arc::clone(&state)))
         .or(contribute_players(Arc::clone(&state)))
+
         .or(contribute_detail(Arc::clone(&state)))
+        .or(contribute_fflogs_jobs(Arc::clone(&state)))
+        .or(contribute_fflogs_results(Arc::clone(&state)))
         .or(stats(Arc::clone(&state)))
         .or(stats_seven_days(Arc::clone(&state)))
         .or(assets())
@@ -101,6 +104,8 @@ fn contribute_players(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
     warp::post().and(route).boxed()
 }
 
+
+
 fn contribute_detail(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
     let route = warp::path("contribute")
         .and(warp::path("detail"))
@@ -109,6 +114,27 @@ fn contribute_detail(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
         .and_then(move |detail: handlers::UploadablePartyDetail| handlers::contribute_detail_handler(Arc::clone(&state), detail));
     warp::post().and(route).boxed()
 }
+
+fn contribute_fflogs_jobs(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
+    let route = warp::path("contribute")
+        .and(warp::path("fflogs"))
+        .and(warp::path("jobs"))
+        .and(warp::path::end())
+        .and_then(move || handlers::contribute_fflogs_jobs_handler(Arc::clone(&state)));
+    warp::get().and(route).boxed()
+}
+
+fn contribute_fflogs_results(state: Arc<State>) -> BoxedFilter<(impl Reply,)> {
+    let route = warp::path("contribute")
+        .and(warp::path("fflogs"))
+        .and(warp::path("results"))
+        .and(warp::path::end())
+        .and(warp::body::json())
+        .and_then(move |results: Vec<handlers::ParseResult>| handlers::contribute_fflogs_results_handler(Arc::clone(&state), results));
+    warp::post().and(route).boxed()
+}
+
+
 
 fn assets() -> BoxedFilter<(impl Reply,)> {
     warp::get()

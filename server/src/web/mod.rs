@@ -22,7 +22,7 @@ pub async fn start(config: Arc<Config>) -> Result<()> {
 
     // Background tasks
     background::spawn_stats_task(Arc::clone(&state));
-    background::spawn_fflogs_task(Arc::clone(&state));
+    // background::spawn_fflogs_task(Arc::clone(&state));
 
     tracing::info!("listening at {}", config.web.host);
     warp::serve(routes::router(state)).run(config.web.host).await;
