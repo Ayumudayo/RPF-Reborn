@@ -55,7 +55,7 @@ impl Statistics {
         self.count[0].count
     }
 
-    pub fn player_name(&self, cid: &u32) -> Cow<str> {
+    pub fn player_name(&self, cid: &u32) -> Cow<'_, str> {
         let alias = match self.aliases.get(cid) {
             Some(a) => a,
             None => return "<unknown>".into(),
@@ -97,7 +97,7 @@ pub struct DutyInfo {
 }
 
 impl DutyInfo {
-    pub fn name(&self, lang: &Language) -> Cow<str> {
+    pub fn name(&self, lang: &Language) -> Cow<'_, str> {
         let kind = match DutyType::from_u8(self.info.0) {
             Some(k) => k,
             None => return Cow::from("<unknown>"),

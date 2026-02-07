@@ -54,7 +54,7 @@ impl PartyFinderListing {
         self.search_area.contains(SearchAreaFlags::DATA_CENTRE)
     }
 
-    pub fn duty_name(&self, lang: &Language) -> Cow<str> {
+    pub fn duty_name(&self, lang: &Language) -> Cow<'_, str> {
         crate::ffxiv::duty_name(self.duty_type, self.category, self.duty, *lang)
     }
 
@@ -116,7 +116,7 @@ impl PartyFinderListing {
             .copied()
     }
 
-    pub fn created_world_string(&self) -> Cow<str> {
+    pub fn created_world_string(&self) -> Cow<'_, str> {
         self.created_world()
             .map(|world| Cow::from(world.name()))
             .unwrap_or_else(|| Cow::from(self.created_world.to_string()))
@@ -128,7 +128,7 @@ impl PartyFinderListing {
             .copied()
     }
 
-    pub fn home_world_string(&self) -> Cow<str> {
+    pub fn home_world_string(&self) -> Cow<'_, str> {
         self.home_world()
             .map(|world| Cow::from(world.name()))
             .unwrap_or_else(|| Cow::from(self.home_world.to_string()))
