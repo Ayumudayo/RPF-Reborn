@@ -22,7 +22,6 @@ pub async fn start(config: Arc<Config>) -> Result<()> {
 
     // Background tasks
     background::spawn_stats_task(Arc::clone(&state));
-    // background::spawn_fflogs_task(Arc::clone(&state));
 
     tracing::info!("listening at {}", config.web.host);
     warp::serve(routes::router(state)).run(config.web.host).await;
@@ -33,7 +32,6 @@ pub struct State {
     pub mongo: MongoClient,
     pub stats: RwLock<Option<CachedStatistics>>,
     pub listings_channel: Sender<Arc<[PartyFinderListing]>>,
-    pub fflogs_client: Option<crate::fflogs::FFLogsClient>,
 }
 
 impl State {
@@ -42,14 +40,11 @@ impl State {
             .await
             .context("could not create mongodb client")?;
             
-        let fflogs_client = config.fflogs.clone().map(crate::fflogs::FFLogsClient::new);
-
         let (tx, _) = tokio::sync::broadcast::channel(16);
         let state = Arc::new(Self {
             mongo,
             stats: Default::default(),
             listings_channel: tx,
-            fflogs_client,
         });
 
         // Initialize Indexes
