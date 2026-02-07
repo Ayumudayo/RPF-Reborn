@@ -19,7 +19,7 @@ public class ConfigWindow : Window, IDisposable
     public ConfigWindow(Plugin plugin) : base("Remote Party Finder")
     {
         _configuration = plugin.Configuration;
-        Flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize;
+        Flags = ImGuiWindowFlags.AlwaysAutoResize;
 
         Size = new Vector2(500, 0);
     }
@@ -55,24 +55,27 @@ public class ConfigWindow : Window, IDisposable
 
     private void DrawSettingsTab()
     {
-        ImGui.Text("FFLogs API Settings");
-        
-        var clientId = _configuration.FFLogsClientId;
-        if (ImGui.InputText("Client ID", ref clientId, 100))
+        // FFLogs API Settings (접기 가능)
+        if (ImGui.CollapsingHeader("FFLogs API Settings", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            _configuration.FFLogsClientId = clientId;
-            _configuration.Save();
-        }
+            ImGui.Indent();
+            
+            var clientId = _configuration.FFLogsClientId;
+            if (ImGui.InputText("Client ID", ref clientId, 100))
+            {
+                _configuration.FFLogsClientId = clientId;
+                _configuration.Save();
+            }
 
-        var clientSecret = _configuration.FFLogsClientSecret;
-        if (ImGui.InputText("Client Secret", ref clientSecret, 100, ImGuiInputTextFlags.Password))
-        {
-            _configuration.FFLogsClientSecret = clientSecret;
-            _configuration.Save();
-        }
+            var clientSecret = _configuration.FFLogsClientSecret;
+            if (ImGui.InputText("Client Secret", ref clientSecret, 100, ImGuiInputTextFlags.Password))
+            {
+                _configuration.FFLogsClientSecret = clientSecret;
+                _configuration.Save();
+            }
 
-        if (ImGui.CollapsingHeader("How to get a client ID and a client secret:"))
-        {
+            if (ImGui.CollapsingHeader("How to get a client ID and a client secret:"))
+            {
             ImGui.AlignTextToFramePadding();
             ImGui.Bullet();
             ImGui.Text("Open https://www.fflogs.com/api/clients/ or");
@@ -115,31 +118,40 @@ public class ConfigWindow : Window, IDisposable
             ImGui.AlignTextToFramePadding();
             ImGui.Bullet();
             ImGui.Text("Paste both client ID and secret above");
+            }
+            
+            ImGui.Unindent();
         }
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
-        var isAdvanced = _configuration.AdvancedSettingsEnabled;
-        ImGui.TextWrapped(
-            "This section is for advanced users to configure which services to send party finder data to. " +
-            "Only enable if you know what you are doing.");
-        
-        ImGui.Spacing();
-        
-        if (ImGui.Checkbox("Enable Advanced Settings", ref isAdvanced))
+        // Advanced Settings (접기 가능)
+        if (ImGui.CollapsingHeader("Advanced Settings"))
         {
-            _configuration.AdvancedSettingsEnabled = isAdvanced;
-            _configuration.Save();
-        }
+            ImGui.Indent();
+            
+            ImGui.TextWrapped(
+                "This section is for advanced users to configure which services to send party finder data to. " +
+                "Only enable if you know what you are doing.");
+            
+            ImGui.Spacing();
+            
+            var isAdvanced = _configuration.AdvancedSettingsEnabled;
+            if (ImGui.Checkbox("Enable Advanced Settings", ref isAdvanced))
+            {
+                _configuration.AdvancedSettingsEnabled = isAdvanced;
+                _configuration.Save();
+            }
 
-        if (!isAdvanced) return;
+            if (!isAdvanced) {
+                ImGui.Unindent();
+                return;
+            }
 
-        ImGui.Separator();
-        ImGui.Spacing();
-        
-        ImGui.Text("Upload URLs");
+            ImGui.Separator();
+            ImGui.Spacing();
         
         using (ImRaii.Table((ImU8String)"uploadUrls", 3, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.Borders))
         {
@@ -218,9 +230,9 @@ public class ConfigWindow : Window, IDisposable
 
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(1, 0, 0, 1), _uploadUrlError);
-
-
-
+            
+            ImGui.Unindent();
+        }
     }
 
     private void DrawDebugTab()
